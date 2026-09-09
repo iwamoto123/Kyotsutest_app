@@ -127,6 +127,28 @@ export function runReducer(state: RunState, action: RunAction): RunState {
 }
 export const scoreRun = (run: RunState) =>
   run.grades.filter(Boolean).length * 2;
+export function evidenceForQuestion(
+  run: RunState,
+  question: number,
+  expectedSentence: string,
+  sentence: string,
+) {
+  const chosen = run.evidence[question] === sentence;
+  const revealed = run.phase === 'finished' || run.grades[question] !== null;
+  const correct = revealed && expectedSentence === sentence;
+  return {
+    chosen,
+    correct,
+    label:
+      chosen && correct
+        ? 'あなたの根拠 = 正解の根拠'
+        : correct
+          ? '正解の根拠'
+          : chosen
+            ? 'あなたの根拠'
+            : '',
+  };
+}
 export const formatTime = (ms: number) => {
   const seconds = Math.ceil(Math.max(0, ms) / 1000);
   return `${Math.floor(seconds / 60)

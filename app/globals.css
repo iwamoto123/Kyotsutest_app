@@ -1076,3 +1076,317 @@ button:focus-visible {
     transition: none !important;
   }
 }
+
+/* Pencil evidence stays separate from the red answer key. */
+.evidence-tools {
+  margin: 0 0 17px;
+  padding: 12px 12px 10px;
+  background: #f3f4ef;
+  border: 1px solid #cbd0c3;
+  border-left: 3px solid var(--pen-blue);
+  border-radius: 3px;
+}
+.evidence-tool-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.evidence-tool-heading strong {
+  font-weight: 600;
+}
+.evidence-questions {
+  display: flex;
+  gap: 3px;
+  margin-left: auto;
+}
+.evidence-questions label {
+  position: relative;
+  padding: 8px 9px;
+  font-size: 13px;
+  min-height: 36px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #62685c;
+  white-space: nowrap;
+}
+.evidence-questions label.active {
+  background: #e1eaf1;
+  color: var(--pen-blue);
+  box-shadow: inset 0 -2px var(--pen-blue);
+}
+.evidence-questions label:focus-within {
+  outline: 2px solid var(--pen-blue);
+  outline-offset: 2px;
+}
+.evidence-tools > p {
+  font-family: 'Times New Roman', serif;
+  font-size: 16px;
+  line-height: 1.45;
+  margin: 8px 0 10px;
+  color: #30382c;
+}
+.evidence-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #676c60;
+}
+.your-line {
+  color: var(--pen-blue);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.correct-line {
+  color: var(--pen-red);
+  text-decoration: underline double;
+  text-underline-offset: 3px;
+}
+.evidence-link {
+  font-size: 13px;
+  color: var(--pen-blue);
+  margin: 9px 0 0 14px;
+  padding: 7px 2px;
+  min-height: 38px;
+  white-space: normal;
+  height: auto;
+  text-align: left;
+  justify-content: flex-start;
+  line-height: 1.6;
+  border-radius: 0;
+  gap: 6px;
+}
+.evidence-note small {
+  display: block;
+  font-family: Arial, 'Yu Gothic', sans-serif;
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 3px;
+}
+.sentence-label {
+  display: block;
+  font-family: Arial, 'Hiragino Kaku Gothic ProN', sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--pen-blue);
+  margin: 9px 0 3px;
+  font-weight: 500;
+}
+.passage-sentence.evidence-correct .original {
+  text-decoration: underline double var(--pen-red);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+.passage-sentence.evidence-correct .sentence-label {
+  color: var(--pen-red);
+}
+.passage-sentence.evidence-match .original {
+  background: linear-gradient(transparent 65%, #dbe9f3 65%);
+}
+.notice h2 .english-unit {
+  text-align: center;
+}
+.notice h2 .translation,
+.notice h3 .translation {
+  font-weight: 400;
+  text-decoration: none;
+  text-align: left;
+  letter-spacing: 0;
+}
+
+/* Review keeps the same paper; the listening controls sit on the desk. */
+.review-mode {
+  padding-bottom: 310px;
+}
+.review-banner {
+  border-top: 1px solid #bfc6b5;
+  border-bottom: 1px solid #bfc6b5;
+  padding: 13px 2px;
+  margin: 0 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.review-banner > div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #3b4b31;
+  font-size: 14px;
+}
+.review-banner strong {
+  font-weight: 600;
+}
+.review-banner label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.review-banner > p {
+  flex-basis: 100%;
+  font-size: 12px;
+  line-height: 1.65;
+  color: #63715b;
+  margin: 0;
+}
+.review-mode .session-clock {
+  color: #536646;
+}
+.review-mode .passage-sentence {
+  scroll-margin-top: 130px;
+  scroll-margin-bottom: 290px;
+}
+.review-mode .sentence-playing {
+  background: #f7edcc;
+  box-shadow: 0 0 0 6px #f7edcc;
+  border-radius: 1px;
+  transition: background 0.2s;
+  position: relative;
+}
+.review-mode .sentence-playing:before {
+  content: '▶';
+  position: absolute;
+  left: -13px;
+  top: 4px;
+  font-size: 10px;
+  color: #806627;
+}
+.review-mode .sentence-playing .translation {
+  border-left-color: #cfbb80;
+}
+.review-dock {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(470px, 100%);
+  z-index: 30;
+  background: #f0f2ebf7;
+  backdrop-filter: blur(10px);
+  border-top: 1px solid #b5bfaa;
+  padding: 12px 15px calc(8px + env(safe-area-inset-bottom));
+  box-shadow: 0 -5px 20px #313b2509;
+}
+.audio-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14px;
+  color: #384b2b;
+  margin-bottom: 9px;
+}
+.audio-heading strong {
+  font-weight: 600;
+}
+.audio-heading > span {
+  margin-left: auto;
+  font-size: 12px;
+  color: #6e7766;
+  font-variant-numeric: tabular-nums;
+}
+.audio-controls {
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
+  gap: 7px;
+}
+.audio-controls button {
+  min-height: 43px;
+  font-size: 14px;
+}
+.audio-play {
+  background: #3b5130;
+  color: #fff;
+}
+.audio-settings {
+  display: grid;
+  grid-template-columns: 105px 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+.audio-settings [data-slot='select-trigger'] {
+  width: 100%;
+  height: 38px;
+  font-size: 13px;
+  background: #fafbf7;
+  border-color: #c2c9b9;
+}
+.audio-guidance {
+  font-size: 12px;
+  line-height: 1.6;
+  min-height: 38px;
+  margin: 8px 0 2px;
+  color: #526346;
+}
+.audio-source {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #7b8374;
+}
+.review-return {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+  padding-top: 7px;
+  border-top: 1px solid #d4daca;
+}
+.review-return button {
+  height: 36px;
+  font-size: 13px;
+}
+.review-mode .action-message {
+  bottom: 295px;
+}
+.finish-dock {
+  grid-template-columns: 1fr 1.35fr;
+}
+.finish-dock button {
+  padding-left: 7px;
+  padding-right: 7px;
+  white-space: normal;
+}
+@media (max-width: 360px) {
+  .evidence-tool-heading {
+    gap: 3px;
+  }
+  .evidence-questions {
+    gap: 0;
+  }
+  .evidence-questions label {
+    padding: 8px 7px;
+  }
+  .evidence-tools {
+    padding: 9px;
+  }
+  .evidence-tool-heading strong {
+    font-size: 12px;
+  }
+  .review-banner {
+    gap: 4px;
+  }
+  .review-banner > div {
+    font-size: 13px;
+  }
+  .review-dock {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+  .review-mode {
+    padding-bottom: 320px;
+  }
+  .audio-settings {
+    grid-template-columns: 95px 1fr;
+  }
+  .finish-dock button {
+    font-size: 12px;
+  }
+}

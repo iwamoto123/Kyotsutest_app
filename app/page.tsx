@@ -15,6 +15,8 @@ import {
   BookMarked,
   Check,
   Languages,
+  PencilLine,
+  Headphones,
   Paperclip,
   RotateCcw,
   Volume2,
@@ -40,9 +42,12 @@ import {
   formatTime,
   runReducer,
   scoreRun,
+  evidenceForQuestion,
   type RunAction,
 } from '@/lib/exam-engine';
 import vocabulary from '@/lib/vocabulary.json';
+import { ReviewPlayer, type ReviewPlayerHandle } from './review-player';
+import { Switch } from '@/components/ui/switch';
 
 const dictionary: Record<string, string> = vocabulary;
 const STORAGE_KEY = 'kyotsutest-vocabulary-v1';
@@ -62,9 +67,15 @@ type Registry = {
 
 const UnitContext = createContext<{
   hintOn: boolean;
+  allTranslations: boolean;
   translated: Set<string>;
   clickUnit: (id: string, normal?: () => void) => void;
-}>({ hintOn: false, translated: new Set(), clickUnit: () => {} });
+}>({
+  hintOn: false,
+  allTranslations: false,
+  translated: new Set(),
+  clickUnit: () => {},
+});
 
 function words(text: string) {
   return text
@@ -84,27 +95,34 @@ function Unit({
   en,
   ja,
   className = '',
+  annotation = '',
+  pressed,
   onClick,
 }: {
   id: string;
   en: string;
   ja: string;
   className?: string;
+  annotation?: string;
+  pressed?: boolean;
   onClick?: () => void;
 }) {
-  const { hintOn, translated, clickUnit } = useContext(UnitContext);
+  const { hintOn, allTranslations, translated, clickUnit } =
+    useContext(UnitContext);
   return (
     <button
       type="button"
       className={`english-unit ${className}`}
       data-unit={id}
       data-en={en}
+      aria-pressed={pressed}
       onClick={() => clickUnit(id, onClick)}
     >
+      {annotation && <span className="sentence-label">{annotation}</span>}
       <span className="original" lang="en">
         {words(en)}
       </span>
-      {hintOn && translated.has(id) && (
+      {(allTranslations || (hintOn && translated.has(id))) && (
         <span className="translation" lang="ja">
           {ja}
         </span>
@@ -120,6 +138,12 @@ export default function Home() {
   const [page, setPage] = useState(0);
   const [activeQuestion, setActiveQuestion] = useState(0);
   const [compare, setCompare] = useState(false);
+  const [review, setReview] = useState(false);
+  const [allTranslations, setAllTranslations] = useState(true);
+  const [listeningSentence, setListeningSentence] = useState<number | null>(
+    null,
+  );
+  const reviewPlayer = useRef<ReviewPlayerHandle>(null);
   const [turnDirection, setTurnDirection] = useState('forward');
   const [hintOn, setHintOn] = useState(false);
   const [translated, setTranslated] = useState<Set<string>>(new Set());
@@ -146,11 +170,11 @@ export default function Home() {
     dragged: false,
     key: false,
   });
-  const live = useRef({ page, modal, activeQuestion, compare, hintOn });
+  const live = useRef({ page, modal, activeQuestion, compare, hintOn, review });
   useLayoutEffect(() => {
     runRef.current = run;
     savedRef.current = saved;
-    live.current = { page, modal, activeQuestion, compare, hintOn };
+    live.current = { page, modal, activeQuestion, compare, hintOn, review };
   });
 
   function dispatch(action: RunAction) {
@@ -423,7 +447,12 @@ export default function Home() {
     }
     function keydown(event: KeyboardEvent) {
       if (event.key === 'Escape') clearHint();
-      if (event.code === 'KeyH' && !event.repeat && !live.current.modal) {
+      if (
+        event.code === 'KeyH' &&
+        !event.repeat &&
+        !live.current.modal &&
+        !live.current.review
+      ) {
         event.preventDefault();
         hint.current.key = true;
         updateHint();
@@ -568,6 +597,50 @@ export default function Home() {
       reveal(id);
     else normal?.();
   }
+  function startReview(question = activeQuestion) {
+    if (run.phase !== 'finished') return;
+    clearHint();
+    setModal(null);
+    setReview(true);
+    setAllTranslations(true);
+    setPage(0);
+    setActiveQuestion(question);
+    setCompare(false);
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }
+  function restart() {
+    reviewPlayer.current?.pause();
+    setReview(false);
+    setListeningSentence(null);
+    setRun(createRun(QUESTIONS.map((q) => q.answer)));
+    clearHint();
+    setPage(0);
+    setActiveQuestion(0);
+    setCompare(false);
+    setModal(null);
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }
+  function openEvidence(question: number) {
+    reviewPlayer.current?.pause();
+    clearHint();
+    setActiveQuestion(question);
+    setCompare(true);
+    turn(0);
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }
+  useEffect(() => {
+    if (!review || page !== 0 || listeningSentence === null) return;
+    const sentence = root.current?.querySelector<HTMLElement>(
+      `[data-unit="${SENTENCES[listeningSentence].id}"]`,
+    );
+    sentence?.scrollIntoView({
+      block: 'center',
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? 'auto'
+        : 'smooth',
+    });
+  }, [review, page, listeningSentence]);
+
   function select(question: number, option: number) {
     setActiveQuestion(question);
     dispatch({ type: 'select', question, option });
@@ -594,7 +667,8 @@ export default function Home() {
   }
   function renderQuestion(index: number, compact = false) {
     const question = QUESTIONS[index],
-      marked = run.grades[index] !== null;
+      marked = run.grades[index] !== null,
+      revealed = marked || run.phase === 'finished';
     return (
       <section
         className={`question-block ${marked ? 'graded' : ''} ${compact ? 'compact-question' : ''}`}
@@ -621,7 +695,7 @@ export default function Home() {
         >
           {question.choices.map(([en, ja], option) => (
             <div
-              className={`choice-row ${run.eliminated[index].includes(option) ? 'eliminated' : ''} ${marked && option === question.answer ? 'answer-correct' : ''}`}
+              className={`choice-row ${run.eliminated[index].includes(option) ? 'eliminated' : ''} ${revealed && option === question.answer ? 'answer-correct' : ''}`}
               data-choice-row={option}
               data-question={index}
               key={option}
@@ -658,27 +732,38 @@ export default function Home() {
             </div>
           ))}
         </RadioGroup>
+        <Button
+          variant="ghost"
+          className="evidence-link"
+          onClick={() => openEvidence(index)}
+        >
+          <PencilLine size={15} />
+          {revealed
+            ? '本文で根拠を見比べる'
+            : run.evidence[index]
+              ? '引いた根拠を確認・変更'
+              : '本文で解答の根拠に線を引く'}
+          <ArrowRight size={14} />
+        </Button>
         {run.evidence[index] && (
-          <button
-            type="button"
-            className="evidence-note"
-            onClick={() => {
-              setActiveQuestion(index);
-              turn(0);
-            }}
-          >
+          <p className="evidence-note">
             <Paperclip size={13} />
             <span>
+              <small>あなたの根拠</small>
               {SENTENCES.find((s) => s.id === run.evidence[index])?.en}
             </span>
-          </button>
+          </p>
         )}
-        {marked ? (
+        {revealed ? (
           <div
             className={`teacher-note ${run.grades[index] ? '' : 'review-note'}`}
           >
             <b>
-              {run.grades[index] ? '正解' : `正解は ${question.answer + 1}`}
+              {run.grades[index] === null
+                ? `未解答 · 正解は ${question.answer + 1}`
+                : run.grades[index]
+                  ? '正解'
+                  : `正解は ${question.answer + 1}`}
             </b>
             {question.explanation}
           </div>
@@ -701,8 +786,18 @@ export default function Home() {
   const answered = run.grades.filter((value) => value !== null).length;
 
   return (
-    <UnitContext.Provider value={{ hintOn, translated, clickUnit }}>
-      <main className={`exam-app ${hintOn ? 'hint-active' : ''}`} ref={root}>
+    <UnitContext.Provider
+      value={{
+        hintOn,
+        allTranslations: review && allTranslations,
+        translated,
+        clickUnit,
+      }}
+    >
+      <main
+        className={`exam-app ${hintOn ? 'hint-active' : ''} ${review ? 'review-mode' : ''}`}
+        ref={root}
+      >
         <header className="app-header">
           <span className="app-name">
             攻略ノート<small>英語・リーディング</small>
@@ -711,11 +806,13 @@ export default function Home() {
             className={`session-clock ${run.remainingMs <= 30_000 ? 'urgent' : ''}`}
           >
             <small>
-              {modal && run.phase === 'playing'
-                ? '一時停止'
-                : run.phase === 'ready'
-                  ? '制限時間'
-                  : '残り時間'}
+              {review
+                ? '復習中'
+                : modal && run.phase === 'playing'
+                  ? '一時停止'
+                  : run.phase === 'ready'
+                    ? '制限時間'
+                    : '残り時間'}
             </small>
             {formatTime(run.remainingMs)}
           </div>
@@ -763,6 +860,69 @@ export default function Home() {
             {total} / 6 点{run.combo > 1 && <b> · {run.combo}問連続</b>}
           </span>
         </div>
+        {review && (
+          <section className="review-banner">
+            <div>
+              <Headphones size={17} />
+              <strong>全訳・音声で復習</strong>
+            </div>
+            <label htmlFor="full-translation">
+              全訳を表示
+              <Switch
+                id="full-translation"
+                checked={allTranslations}
+                onCheckedChange={setAllTranslations}
+              />
+            </label>
+            <p>
+              英文を残したまま対訳を確認。文をタップすると、その文から聴けます。
+            </p>
+          </section>
+        )}
+        {page === 0 && (
+          <section className="evidence-tools" aria-label="解答根拠の下線">
+            <div className="evidence-tool-heading">
+              <PencilLine size={15} />
+              <strong>
+                {run.phase === 'finished' || run.grades[activeQuestion] !== null
+                  ? '根拠を見比べる'
+                  : '解答の根拠に線を引く'}
+              </strong>
+              <RadioGroup
+                className="evidence-questions"
+                value={String(activeQuestion)}
+                onValueChange={(value) => {
+                  if (value !== null) setActiveQuestion(Number(value));
+                }}
+                aria-label="根拠を選ぶ設問"
+              >
+                {QUESTIONS.map((_, i) => (
+                  <label
+                    key={i}
+                    className={i === activeQuestion ? 'active' : ''}
+                  >
+                    <RadioGroupItem
+                      id={`evidence-question-${i}`}
+                      value={String(i)}
+                      className="sr-only"
+                    />
+                    問{i + 1}
+                  </label>
+                ))}
+              </RadioGroup>
+            </div>
+            <p lang="en">{QUESTIONS[activeQuestion].en}</p>
+            <div className="evidence-legend">
+              <span className="your-line">青線 = あなたの根拠</span>
+              {run.phase === 'finished' ||
+              run.grades[activeQuestion] !== null ? (
+                <span className="correct-line">赤い二重線 = 正解の根拠</span>
+              ) : (
+                <span>本文の文をタップ。もう一度で解除。</span>
+              )}
+            </div>
+          </section>
+        )}
         <div className="book-index">
           <button
             onClick={() => turn(0)}
@@ -808,38 +968,68 @@ export default function Home() {
             <>
               <Unit {...INTRO} className="exam-intro" />
               <section className="notice">
-                <h2>Night at the Museum</h2>
+                <h2>
+                  <Unit id="title" en="Night at the Museum" ja="夜の博物館" />
+                </h2>
                 {PASSAGE.map((section, i) => (
                   <div key={i}>
-                    {section.title && <h3>{section.title}</h3>}
-                    {section.sentences.map((sentence) => (
-                      <Unit
-                        key={sentence.id}
-                        {...sentence}
-                        className={`passage-sentence ${run.evidence.includes(sentence.id) ? 'underlined' : ''} ${run.grades.some((grade, index) => grade && QUESTIONS[index].evidence === sentence.id) ? 'evidence-correct' : ''}`}
-                        onClick={() => {
-                          if (
-                            run.phase === 'finished' ||
-                            run.grades[activeQuestion] !== null
-                          )
-                            return;
-                          dispatch({
-                            type: 'evidence',
-                            question: activeQuestion,
-                            sentence: sentence.id,
-                          });
-                          playSound('pencil');
-                          announce(
-                            `問${activeQuestion + 1}の根拠${run.evidence[activeQuestion] === sentence.id ? 'を解除' : 'に下線'}`,
-                          );
-                        }}
-                      />
-                    ))}
+                    {section.title && (
+                      <h3>
+                        <Unit
+                          id={`heading${i}`}
+                          en={section.title}
+                          ja={section.titleJa!}
+                        />
+                      </h3>
+                    )}
+                    {section.sentences.map((sentence) => {
+                      const evidence = evidenceForQuestion(
+                        run,
+                        activeQuestion,
+                        QUESTIONS[activeQuestion].evidence,
+                        sentence.id,
+                      );
+                      return (
+                        <Unit
+                          key={sentence.id}
+                          {...sentence}
+                          className={`passage-sentence ${evidence.chosen ? 'underlined' : ''} ${evidence.correct ? 'evidence-correct' : ''} ${evidence.chosen && evidence.correct ? 'evidence-match' : ''} ${review && listeningSentence !== null && SENTENCES[listeningSentence].id === sentence.id ? 'sentence-playing' : ''}`}
+                          annotation={evidence.label}
+                          pressed={review ? undefined : evidence.chosen}
+                          onClick={() => {
+                            if (review) {
+                              reviewPlayer.current?.playSentence(
+                                SENTENCES.findIndex(
+                                  (s) => s.id === sentence.id,
+                                ),
+                              );
+                              return;
+                            }
+                            if (
+                              run.phase === 'finished' ||
+                              run.grades[activeQuestion] !== null
+                            )
+                              return;
+                            dispatch({
+                              type: 'evidence',
+                              question: activeQuestion,
+                              sentence: sentence.id,
+                            });
+                            playSound('pencil');
+                            announce(
+                              `問${activeQuestion + 1}の根拠${evidence.chosen ? 'を解除' : 'に下線'}`,
+                            );
+                          }}
+                        />
+                      );
+                    })}
                   </div>
                 ))}
               </section>
               <p className="paper-instruction">
-                文をタップで根拠に下線。単語を長押しで辞書。
+                {review
+                  ? '文をタップで音声再生。単語を長押しで辞書。'
+                  : '文をタップで根拠に下線。単語を長押しで辞書。'}
               </p>
             </>
           ) : (
@@ -892,7 +1082,7 @@ export default function Home() {
             {renderQuestion(activeQuestion, true)}
           </aside>
         )}
-        {run.phase === 'finished' && (
+        {run.phase === 'finished' && !review && (
           <section className="run-result" aria-live="polite">
             <strong>
               {total === 6
@@ -903,71 +1093,106 @@ export default function Home() {
               {total} / 6 点 · {answered}問解答 · 対訳 {run.hinted.length}か所
             </span>
             <Button variant="outline" onClick={() => setModal('results')}>
-              今回の攻略を見る
+              採点のまとめを見る
             </Button>
           </section>
         )}
-        <div className="tool-dock">
-          <Button
-            variant="outline"
-            className="hint-button"
-            data-hint
-            aria-pressed={hintOn}
-            onClick={(event) => {
-              if (event.detail === 0) {
-                hint.current.latched = !hint.current.latched;
-                updateHint();
-              }
-            }}
-          >
-            <Languages />
-            <span>
-              対訳ヒント
-              <small>
-                {hintOn ? '英文の下に日本語を表示' : '押しながら文をタップ'}
-              </small>
-            </span>
-          </Button>
-          <Button
-            className="main-action"
-            onClick={() => {
-              if (run.phase === 'ready') {
-                dispatch({ type: 'start' });
-                announce('3分で3問。冊子を攻略しよう。');
-              } else if (run.phase === 'finished') {
-                setRun(createRun(QUESTIONS.map((q) => q.answer)));
+        {review ? (
+          <div className="review-dock">
+            <ReviewPlayer
+              ref={reviewPlayer}
+              suspended={modal !== null || page !== 0}
+              onSentenceChange={setListeningSentence}
+              onPlay={() => {
                 clearHint();
-                setPage(0);
-                setActiveQuestion(0);
-                window.scrollTo({ top: 0, behavior: 'auto' });
-              } else if (
-                run.choices[activeQuestion] >= 0 &&
-                run.grades[activeQuestion] === null
-              )
-                grade(activeQuestion);
-              else {
-                if (page === 0) turn(1);
-                else {
-                  setCompare(true);
-                  turn(0);
+                if (page !== 0) turn(0);
+              }}
+            />
+            <div className="review-return">
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  reviewPlayer.current?.pause();
+                  setReview(false);
+                  setListeningSentence(null);
+                  window.scrollTo({ top: 0, behavior: 'auto' });
+                }}
+              >
+                解答へ戻る
+              </Button>
+              <Button variant="outline" onClick={restart}>
+                <RotateCcw size={14} />
+                もう一度解く
+              </Button>
+            </div>
+          </div>
+        ) : run.phase === 'finished' ? (
+          <div className="tool-dock finish-dock">
+            <Button variant="outline" onClick={restart}>
+              <RotateCcw size={16} />
+              もう一度解く
+            </Button>
+            <Button className="main-action" onClick={() => startReview()}>
+              <Headphones size={17} />
+              全訳・音声で復習
+            </Button>
+            <p>青線と赤線で根拠を確認してから、声に出して定着。</p>
+          </div>
+        ) : (
+          <div className="tool-dock">
+            <Button
+              variant="outline"
+              className="hint-button"
+              data-hint
+              aria-pressed={hintOn}
+              onClick={(event) => {
+                if (event.detail === 0) {
+                  hint.current.latched = !hint.current.latched;
+                  updateHint();
                 }
-              }
-            }}
-          >
-            {run.phase === 'ready'
-              ? '演習を始める'
-              : run.phase === 'finished'
-                ? 'もう一度挑戦'
+              }}
+            >
+              <Languages />
+              <span>
+                対訳ヒント
+                <small>
+                  {hintOn ? '英文の下に日本語を表示' : '押しながら文をタップ'}
+                </small>
+              </span>
+            </Button>
+            <Button
+              className="main-action"
+              onClick={() => {
+                if (run.phase === 'ready') {
+                  dispatch({ type: 'start' });
+                  announce('3分で3問。冊子を攻略しよう。');
+                } else if (
+                  run.choices[activeQuestion] >= 0 &&
+                  run.grades[activeQuestion] === null
+                )
+                  grade(activeQuestion);
+                else {
+                  if (page === 0) turn(1);
+                  else {
+                    setCompare(true);
+                    turn(0);
+                  }
+                }
+              }}
+            >
+              {run.phase === 'ready'
+                ? '演習を始める'
                 : run.choices[activeQuestion] >= 0 &&
                     run.grades[activeQuestion] === null
                   ? `問${activeQuestion + 1}を確定`
                   : page === 0
                     ? '設問をめくる'
                     : '本文と見比べる'}
-            <ArrowRight size={16} />
-          </Button>
-          <p>ヒントはタップでON/OFFも可。選択肢を横に払うと消去。</p>
-        </div>
+              <ArrowRight size={16} />
+            </Button>
+            <p>ヒントはタップでON/OFFも可。選択肢を横に払うと消去。</p>
+          </div>
+        )}
         {message && (
           <output className="action-message" aria-live="polite">
             {message}
@@ -1034,13 +1259,21 @@ export default function Home() {
                       <span>
                         問{i + 1}　{question.skill}
                         <small>
-                          {run.evidence[i] === question.evidence
+                          {run.grades[i] !== null &&
+                          run.evidence[i] === question.evidence
                             ? '根拠の一致まで確認'
                             : question.explanation}
                         </small>
                       </span>
                     </div>
                   ))}
+                  <Button
+                    className="save-word-button"
+                    onClick={() => startReview()}
+                  >
+                    <Headphones />
+                    全訳・音声で復習する
+                  </Button>
                   <p className="storage-note">
                     正解数・時間・ヒント利用は、この演習内の記録です。
                   </p>

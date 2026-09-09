@@ -4,6 +4,7 @@ import {
   createRun,
   runReducer,
   scoreRun,
+  evidenceForQuestion,
   formatTime,
 } from '../lib/exam-engine.ts';
 import {
@@ -125,6 +126,27 @@ test('hints count unique units; evidence can be toggled per question', () => {
     run,
   );
   assert.equal(scoreRun(run), 0);
+});
+
+test('evidence display shows only the active question and reveals the answer key after grading', () => {
+  let run = runReducer(start(), {
+    type: 'evidence',
+    question: 0,
+    sentence: 's3',
+  });
+  assert.deepEqual(evidenceForQuestion(run, 0, 's1', 's3'), {
+    chosen: true,
+    correct: false,
+    label: 'あなたの根拠',
+  });
+  assert.equal(evidenceForQuestion(run, 1, 's3', 's3').chosen, false);
+  assert.equal(evidenceForQuestion(run, 0, 's1', 's1').correct, false);
+  run = answer(run, 0, 1);
+  assert.equal(evidenceForQuestion(run, 0, 's1', 's1').correct, true);
+  assert.equal(evidenceForQuestion(run, 0, 's1', 's3').chosen, true);
+  assert.equal(evidenceForQuestion(run, 1, 's3', 's3').correct, false);
+  run = runReducer(run, { type: 'tick', elapsedMs: 180_000 });
+  assert.equal(evidenceForQuestion(run, 1, 's3', 's3').correct, true);
 });
 
 test('every interactive English word has a dictionary meaning and every answer has an evidence sentence', () => {

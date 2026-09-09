@@ -4,7 +4,11 @@ export const INTRO: Sentence = {
   en: 'You are reading a notice about an evening event at a museum.',
   ja: 'あなたは博物館で開かれる夜のイベントのお知らせを読んでいます。',
 };
-export const PASSAGE: { title?: string; sentences: Sentence[] }[] = [
+export const PASSAGE: {
+  title?: string;
+  titleJa?: string;
+  sentences: Sentence[];
+}[] = [
   {
     sentences: [
       {
@@ -21,6 +25,7 @@ export const PASSAGE: { title?: string; sentences: Sentence[] }[] = [
   },
   {
     title: 'Telescope workshop',
+    titleJa: '望遠鏡の体験講座',
     sentences: [
       {
         id: 's2',
@@ -36,6 +41,7 @@ export const PASSAGE: { title?: string; sentences: Sentence[] }[] = [
   },
   {
     title: 'Update from the team',
+    titleJa: '担当者からの最新のお知らせ',
     sentences: [
       {
         id: 's4',
