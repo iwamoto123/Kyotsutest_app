@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { Headphones, Pause, Play, SkipBack, SkipForward } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
   Select,
   SelectContent,
@@ -20,8 +21,8 @@ import {
 import {
   createSpeechPlayer,
   createBrowserSpeechPort,
-  initialPlayback,
   type PlaybackMode,
+  type PlaybackState,
 } from '@/lib/speech-player';
 import { SENTENCES } from '@/lib/exam-content';
 
@@ -40,13 +41,21 @@ export function ReviewPlayer({
   suspended,
   onSentenceChange,
   onPlay,
+  checkpoint,
+  onCheckpoint,
 }: {
   ref: Ref<ReviewPlayerHandle>;
   suspended: boolean;
   onSentenceChange: (index: number | null) => void;
   onPlay: () => void;
+  checkpoint: PlaybackState;
+  onCheckpoint: (state: PlaybackState) => void;
 }) {
-  const [state, setState] = useState(initialPlayback);
+  const [state, setState] = useState<PlaybackState>(() => ({
+    ...checkpoint,
+    phase: checkpoint.phase === 'idle' ? 'idle' : 'paused',
+    error: '',
+  }));
   const supported = useSyncExternalStore(
     subscribeSupport,
     speechSupported,
@@ -64,6 +73,7 @@ export function ReviewPlayer({
         port.current,
         (next) => {
           setState(next);
+          onCheckpoint(next);
           onSentenceChange(
             next.phase === 'speaking' || next.phase === 'gap'
               ? next.index
@@ -71,6 +81,9 @@ export function ReviewPlayer({
           );
         },
       );
+      const saved = checkpoint;
+      player.current.configure({ rate: saved.rate, mode: saved.mode });
+      player.current.seek(saved.index, false);
     }
     return player.current;
   }
@@ -110,6 +123,34 @@ export function ReviewPlayer({
           {state.index + 1} / {SENTENCES.length} 文
         </span>
       </div>
+      <RadioGroup
+        className="audio-patterns"
+        value={state.mode}
+        onValueChange={(value) => {
+          if (value) getPlayer()?.configure({ mode: value as PlaybackMode });
+        }}
+        disabled={!supported}
+        aria-label="音声の練習方法"
+      >
+        {[
+          { id: 'continuous', label: '通して聴く' },
+          { id: 'repeat', label: '1文リピート' },
+          { id: 'shadow', label: 'シャドーイング' },
+        ].map((item) => (
+          <label
+            key={item.id}
+            htmlFor={`audio-${item.id}`}
+            className={state.mode === item.id ? 'active' : ''}
+          >
+            <RadioGroupItem
+              className="sr-only"
+              id={`audio-${item.id}`}
+              value={item.id}
+            />
+            {item.label}
+          </label>
+        ))}
+      </RadioGroup>
       <div className="audio-controls">
         <Button
           variant="ghost"
@@ -182,30 +223,7 @@ export function ReviewPlayer({
             ))}
           </SelectContent>
         </Select>
-        <Select
-          value={state.mode}
-          onValueChange={(value) => {
-            if (value) getPlayer()?.configure({ mode: value as PlaybackMode });
-          }}
-          disabled={!supported}
-        >
-          <SelectTrigger aria-label="音読の練習方法">
-            <SelectValue>
-              {
-                {
-                  continuous: '通して聴く',
-                  repeat: '1文リピート',
-                  shadow: '聴く → 自分で発音',
-                }[state.mode]
-              }
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="continuous">通して聴く</SelectItem>
-            <SelectItem value="repeat">1文リピート</SelectItem>
-            <SelectItem value="shadow">聴く → 自分で発音</SelectItem>
-          </SelectContent>
-        </Select>
+        <span className="audio-speed-note">速度を変えて、文の先頭から再生</span>
       </div>
       <p className="audio-guidance" aria-live="polite">
         {!supported
@@ -221,7 +239,7 @@ export function ReviewPlayer({
                     ? '同じ文を繰り返します。少し遅れて声を重ねよう。'
                     : state.mode === 'shadow'
                       ? '1文を聴くたびに、発音する時間が入ります。'
-                      : '音声に少し遅れて声を重ねよう。本文の文をタップでそこから再生。')}
+                      : '各文の「この文を聴く」から、再生する場所を選べます。')}
       </p>
       <small className="audio-source">
         端末の英語読み上げ音声を使用 · 録音なし

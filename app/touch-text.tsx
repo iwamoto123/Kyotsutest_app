@@ -37,8 +37,7 @@ export function TouchText({
   en,
   ja,
   className = '',
-  onRead,
-}: Sentence & { className?: string; onRead?: () => void }) {
+}: Sentence & { className?: string }) {
   const tools = useContext(TextToolsContext)!;
   const session = useRef<{
     pointer: number;
@@ -100,7 +99,7 @@ export function TouchText({
     if (
       !event.isPrimary ||
       event.button !== 0 ||
-      !['ink', 'stock', 'word'].includes(tools.mode)
+      !['ink', 'stock', 'word', 'read'].includes(tools.mode)
     )
       return;
     const start = point(
@@ -118,7 +117,7 @@ export function TouchText({
       distance: 0,
       mode: tools.mode,
     };
-    if (tools.mode !== 'word') {
+    if (tools.mode === 'ink' || tools.mode === 'stock') {
       event.preventDefault();
       event.currentTarget.setPointerCapture(event.pointerId);
       tools.onDraft(ranges(start, start));
@@ -131,7 +130,7 @@ export function TouchText({
       current.distance,
       Math.hypot(event.clientX - current.x, event.clientY - current.y),
     );
-    if (current.mode === 'word') return;
+    if (current.mode === 'word' || current.mode === 'read') return;
     const hit = document.elementFromPoint(event.clientX, event.clientY);
     const next = point(hit, event.clientX, event.clientY);
     if (next && own.current?.closest('[data-paper-scroll]')?.contains(hit)) {
@@ -146,7 +145,7 @@ export function TouchText({
       current.distance,
       Math.hypot(event.clientX - current.x, event.clientY - current.y),
     );
-    if (current.mode !== 'word') {
+    if (current.mode === 'ink' || current.mode === 'stock') {
       const hit = document.elementFromPoint(event.clientX, event.clientY);
       const end = point(hit, event.clientX, event.clientY);
       if (end && own.current?.closest('[data-paper-scroll]')?.contains(hit))
@@ -158,7 +157,7 @@ export function TouchText({
       tools.onDraft([]);
       return;
     }
-    if (current.mode === 'word') {
+    if (current.mode === 'word' || current.mode === 'read') {
       if (current.distance < 10)
         tools.onWord(current.start.unit, current.start.index);
     } else {
@@ -171,14 +170,22 @@ export function TouchText({
     session.current = null;
     latest.current.onDraft([]);
   }
-  const canAct = tools.mode !== 'read' || !!onRead;
+  const canAct = tools.mode !== 'read';
   return (
     <div
       ref={own}
       className={`english-unit ${className} ${tools.stocked.has(id) ? 'unit-stocked' : ''} ${tools.correctUnit === id ? 'unit-correct' : ''}`}
       data-unit={id}
-      role={tools.mode === 'word' ? 'group' : canAct ? 'button' : undefined}
-      tabIndex={tools.mode !== 'word' && canAct ? 0 : undefined}
+      role={
+        tools.mode === 'word' || tools.mode === 'read'
+          ? 'group'
+          : canAct
+            ? 'button'
+            : undefined
+      }
+      tabIndex={
+        tools.mode !== 'word' && tools.mode !== 'read' && canAct ? 0 : undefined
+      }
       aria-label={
         tools.mode === 'ink'
           ? `${en} キーボードではEnterで文全体に線を引く`
@@ -193,7 +200,6 @@ export function TouchText({
       onClick={() => {
         if (performance.now() < suppressUntil.current) return;
         if (tools.mode === 'translate') tools.onTranslate(id);
-        else if (tools.mode === 'read') onRead?.();
       }}
       onKeyDown={(event) => {
         if (
@@ -205,7 +211,6 @@ export function TouchText({
         if (tools.mode === 'ink' || tools.mode === 'stock')
           tools.onTrace([{ unit: id, from: 0, to: wordCount(en) - 1 }]);
         else if (tools.mode === 'translate') tools.onTranslate(id);
-        else onRead?.();
       }}
     >
       {tools.correctUnit === id && (
@@ -218,7 +223,7 @@ export function TouchText({
         {tokenize(en).map((token, i) => {
           if (token.index < 0) return token.text;
           const className = `text-word ${containsToken(tools.marks, id, token.index) ? 'inked' : ''} ${containsToken(tools.draft, id, token.index) ? `tracing tracing-${tools.mode}` : ''}`;
-          return tools.mode === 'word' ? (
+          return tools.mode === 'word' || tools.mode === 'read' ? (
             <button
               className={className}
               data-token={token.index}

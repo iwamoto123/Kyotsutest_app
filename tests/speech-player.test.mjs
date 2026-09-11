@@ -161,6 +161,26 @@ test('disposing cancels all speech and prevents future callbacks and play calls'
   assert.ok(f.cancels >= 2);
 });
 
+test('returning to audio restores sentence, speed and practice pattern without autoplay', () => {
+  const before = fixture();
+  before.player.configure({ rate: 0.75, mode: 'repeat' });
+  before.player.seek(1, true);
+  before.player.pause();
+  const saved = before.player.getState();
+  before.player.dispose();
+  const after = fixture();
+  after.player.configure({ rate: saved.rate, mode: saved.mode });
+  after.player.seek(saved.index, false);
+  assert.equal(after.calls.length, 0);
+  assert.equal(after.player.getState().phase, 'paused');
+  after.player.play();
+  assert.equal(after.calls[0].text, 'Second sentence.');
+  assert.equal(after.calls[0].rate, 0.75);
+  after.calls[0].end();
+  after.advance();
+  assert.equal(after.calls[1].text, 'Second sentence.');
+});
+
 test('browser adapter refreshes English voices and clears a native paused state on cancel', (t) => {
   const oldWindow = globalThis.window,
     oldUtterance = globalThis.SpeechSynthesisUtterance;

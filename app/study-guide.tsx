@@ -27,6 +27,8 @@ export function StudyGuide({
   onSubmit,
   onTarget,
   onFind,
+  onRetry,
+  onReview,
 }: {
   state: GuideState;
   target: GuideTarget | null;
@@ -38,6 +40,8 @@ export function StudyGuide({
   onSubmit: () => void;
   onTarget: () => void;
   onFind: () => void;
+  onRetry: () => void;
+  onReview: () => void;
 }) {
   const content = GUIDE_CONTENT[state.question];
   const current = target?.step ?? 4;
@@ -84,12 +88,12 @@ export function StudyGuide({
       title = '見つけた根拠と、選択肢を照らし合わせよう。';
       body =
         selectedOption < 0
-          ? '番号か英文をタップして選ぼう。'
+          ? '左の□にチェック。単語のタップでは意味を調べられるよ。'
           : `選択肢 ${selectedOption + 1} を選択中。確定前なら選び直せるよ。`;
       action =
         selectedOption < 0
-          ? '選択肢を選ぶと確定できる'
-          : `選択肢 ${selectedOption + 1} で確定`;
+          ? '左の□にチェックしてね'
+          : `解答 ${selectedOption + 1} をチェック`;
       break;
     case 'answer-feedback':
       title = state.match
@@ -98,16 +102,13 @@ export function StudyGuide({
       body = state.match
         ? '根拠と選択肢を結びつけられたね。'
         : '確認ポイントは「次に確認」にも保存したよ。';
-      action = state.match
-        ? nextQuestion < 0
-          ? '今回の整理を見る'
-          : `次は、問${nextQuestion + 1}へ`
-        : 'もう一度選ぶ';
+      action =
+        nextQuestion < 0 ? '結果・復習へ進む' : `次は、問${nextQuestion + 1}へ`;
       break;
     case 'done':
       title = '今回の解答と、整理した内容を見返そう。';
       body = '全訳と音声で、読みにくかったところを復習できるよ。';
-      action = '全訳・音声で復習';
+      action = '結果・復習へ進む';
       break;
   }
   const LocationIcon =
@@ -193,12 +194,24 @@ export function StudyGuide({
             {away
               ? `${target?.page === 0 ? '本文' : '設問'}の ${target?.step} を見る`
               : answerMode
-                ? '選択肢を選ぶモードに戻る'
+                ? '書き込みをやめて解答する'
                 : state.stage === 'find'
                   ? '線を引いて探す'
                   : action}
             <ArrowRight size={17} aria-hidden="true" />
           </Button>
+        </div>
+      )}
+      {state.stage === 'answer-feedback' && (
+        <div className="feedback-links">
+          <Button variant="ghost" onClick={onReview}>
+            この問を復習
+          </Button>
+          {!state.match && (
+            <Button variant="ghost" onClick={onRetry}>
+              選び直して確認
+            </Button>
+          )}
         </div>
       )}
     </section>

@@ -17,6 +17,9 @@ import {
   X,
   Volume2,
   VolumeX,
+  Menu,
+  Play,
+  BookOpen,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -59,6 +62,17 @@ import { StudyGuide } from './study-guide';
 import { GuideRegion, type GuideAnnotation } from './guide-region';
 import { useGuideLocation } from './use-guide-location';
 import { ReviewPlayer, type ReviewPlayerHandle } from './review-player';
+import { initialPlayback } from '@/lib/speech-player';
+import { SessionSummary } from './session-summary';
+import { NotebookList } from './notebook-list';
+import { usePageSwipe } from './use-page-swipe';
+import {
+  BOOK_PAGES,
+  adjacentPage,
+  nextUnanswered,
+  type StudyView,
+  type ReviewKind,
+} from '@/lib/study-navigation';
 
 type Mark = {
   question: number;
@@ -69,7 +83,8 @@ type Drawer =
   | null
   | { kind: 'notebook'; filter: NotebookEntry['kind'] }
   | { kind: 'word'; entry: NotebookEntry }
-  | { kind: 'results' };
+  | { kind: 'tools' }
+  | { kind: 'menu' };
 const dictionary: Record<string, string> = vocabulary;
 const MODES: {
   id: ToolMode;
@@ -81,7 +96,7 @@ const MODES: {
     id: 'read',
     label: '読む',
     icon: Hand,
-    help: '縦にスクロールして読む。選択肢はタップで選ぶ。',
+    help: '左右に払ってページをめくる。単語はタップ、解答は左の□にチェック。',
   },
   {
     id: 'ink',
@@ -121,7 +136,11 @@ export default function Home() {
   const [practiceChoice, setPracticeChoice] = useState(-1);
   const [compare, setCompare] = useState(false);
   const [peekQuestion, setPeekQuestion] = useState<number | null>(null);
-  const [review, setReview] = useState(false);
+  const [view, setView] = useState<StudyView>('study');
+  const [reviewKind, setReviewKind] = useState<ReviewKind>('answers');
+  const [notebookFilter, setNotebookFilter] =
+    useState<NotebookEntry['kind']>('note');
+  const review = view === 'review';
   const [fullTranslation, setFullTranslation] = useState(true);
   const [translated, setTranslated] = useState<Set<string>>(new Set());
   const [marks, setMarks] = useState<Mark[]>([]);
@@ -131,6 +150,7 @@ export default function Home() {
   const [drawer, setDrawer] = useState<Drawer>(null);
   const [listening, setListening] = useState<number | null>(null);
   const [sound, setSound] = useState(false);
+  const [audioCheckpoint, setAudioCheckpoint] = useState(initialPlayback);
   const [notice, setNotice] = useState<{
     text: string;
     undo?: () => void;
@@ -141,13 +161,47 @@ export default function Home() {
   const runRef = useRef(run);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audio = useRef<AudioContext | null>(null);
+  const returnPoint = useRef({
+    page: 0,
+    question: 0,
+    mode: 'read' as ToolMode,
+    top: 0,
+    compare: false,
+    peek: null as number | null,
+    translated: new Set<string>(),
+  });
+  const pageOffsets = useRef<Record<string, number>>({});
+  const pageSpace = review ? `review:${reviewKind}` : 'study';
+  const restoring = useRef(false);
+  const turnDirection = useRef(1);
   useLayoutEffect(() => {
     notebook.current = entries;
     runRef.current = run;
   });
   const question =
-    peekQuestion ?? (guided && !review ? guide.question : activeQuestion);
-  const showGuide = guided && !review && peekQuestion === null;
+    peekQuestion ??
+    (guided && view === 'study'
+      ? guide.question
+      : page > 0
+        ? page - 1
+        : activeQuestion);
+  const showGuide = guided && view === 'study' && peekQuestion === null;
+  const swipe = usePageSwipe(
+    view !== 'summary' &&
+      mode === 'read' &&
+      drawer === null &&
+      !(review && reviewKind === 'notebook'),
+    (direction) => {
+      const next = adjacentPage(page, direction);
+      if (next !== page) turn(next);
+      else
+        announce(
+          page === 0
+            ? '最初のページです。左に払うと問1へ。'
+            : '最後のページです。下のボタンから結果・復習へ進めます。',
+        );
+    },
+  );
   const currentGuide = GUIDE_CONTENT[question];
   const score = scoreRun(run);
   const selected = showGuide ? practiceChoice : run.choices[question];
@@ -311,7 +365,7 @@ export default function Home() {
     };
   }, []);
   useEffect(() => {
-    if (run.phase !== 'playing' || guided || drawer || review) return;
+    if (run.phase !== 'playing' || guided || drawer || view !== 'study') return;
     let last = performance.now();
     const timer = setInterval(() => {
       const now = performance.now();
@@ -321,15 +375,22 @@ export default function Home() {
       last = now;
     }, 200);
     return () => clearInterval(timer);
-  }, [run.phase, guided, drawer, review]);
+  }, [run.phase, guided, drawer, view]);
   useEffect(() => {
     if (listening === null || !review || page !== 0) return;
     scroll.current
       ?.querySelector<HTMLElement>(`[data-unit="${SENTENCES[listening].id}"]`)
       ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }, [listening, page, review]);
+  useEffect(() => {
+    if (run.remainingMs === 0 && view === 'study') showSummary();
+  }, [run.remainingMs, view]);
 
   useLayoutEffect(() => {
+    if (restoring.current) {
+      restoring.current = false;
+      return;
+    }
     if (!target) return;
     player.current?.pause();
     setPage(target.page);
@@ -390,16 +451,24 @@ export default function Home() {
     requestAnimationFrame(() => scrollToTarget(destination));
   }
 
-  function turn(next: number, target?: string) {
+  function turn(next: number, target?: string, space = pageSpace) {
     player.current?.pause();
+    // Capture before the new page can clamp scrollTop and emit a scroll event.
+    const savedTop = pageOffsets.current[`${space}:${next}`] ?? 0;
+    turnDirection.current = next >= page ? 1 : -1;
     setPage(next);
+    if (!showGuide && next > 0) setActiveQuestion(next - 1);
     setDraft([]);
     requestAnimationFrame(() => {
       if (target)
         scroll.current
           ?.querySelector<HTMLElement>(`[data-unit="${target}"]`)
           ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      else scroll.current?.scrollTo({ top: 0, behavior: 'auto' });
+      else
+        scroll.current?.scrollTo({
+          top: savedTop,
+          behavior: 'auto',
+        });
     });
   }
   function setTool(next: ToolMode) {
@@ -410,6 +479,56 @@ export default function Home() {
   function openNotebook(filter: NotebookEntry['kind'] = 'note') {
     player.current?.pause();
     setDrawer({ kind: 'notebook', filter });
+  }
+  function capturePlace() {
+    if (view === 'study')
+      returnPoint.current = {
+        page,
+        question: activeQuestion,
+        mode,
+        top: scroll.current?.scrollTop ?? 0,
+        compare,
+        peek: peekQuestion,
+        translated: new Set(translated),
+      };
+  }
+  function showSummary() {
+    capturePlace();
+    player.current?.pause();
+    setListening(null);
+    setDraft([]);
+    setDrawer(null);
+    setView('summary');
+    setMode('read');
+  }
+  function resumeStudy() {
+    if (run.phase === 'finished') return;
+    const saved = returnPoint.current;
+    player.current?.pause();
+    setListening(null);
+    setDrawer(null);
+    restoring.current = guided && saved.peek === null;
+    setView('study');
+    setPage(saved.page);
+    setActiveQuestion(saved.question);
+    setMode(saved.mode);
+    setCompare(saved.compare);
+    setPeekQuestion(saved.peek);
+    setTranslated(new Set(saved.translated));
+    requestAnimationFrame(() =>
+      scroll.current?.scrollTo({ top: saved.top, behavior: 'auto' }),
+    );
+  }
+  function changeReview(kind: ReviewKind, index = activeQuestion) {
+    player.current?.pause();
+    setListening(null);
+    setMode('read');
+    setReviewKind(kind);
+    setActiveQuestion(index);
+    setFullTranslation(kind !== 'answers');
+    setCompare(false);
+    setDrawer(null);
+    turn(kind === 'answers' ? index + 1 : 0, undefined, `review:${kind}`);
   }
   function lookup(unitId: string, index: number) {
     const unit = getUnit(unitId),
@@ -442,9 +561,11 @@ export default function Home() {
       else next.add(unit);
       return next;
     });
-    setRun((previous) =>
-      runReducer(previous, { type: 'hint', sentence: unit }),
-    );
+    if (view === 'study')
+      setRun((previous) =>
+        runReducer(previous, { type: 'hint', sentence: unit }),
+      );
+    setMode('read');
   }
   function recordMistake(
     kind: 'evidence' | 'answer',
@@ -485,9 +606,14 @@ export default function Home() {
         `${ranges.length}文を、対訳と一緒にストック`,
       );
       tone();
+      setMode('read');
       return;
     }
     if (mode !== 'ink') return;
+    if (view !== 'study') {
+      setMode('read');
+      return;
+    }
     if (peekQuestion !== null) {
       announce('保存した文を確認中です。ガイドに戻ってから線を引こう。');
       return;
@@ -540,11 +666,13 @@ export default function Home() {
           ranges.map((range) => range.unit).join('-'),
         );
     } else announce('指でなぞった部分に線を引いたよ。');
+    setMode('read');
     tone();
   }
   function undoInk() {
     const lastIndex = marks.findLastIndex((mark) => mark.question === question);
     if (
+      view !== 'study' ||
       lastIndex < 0 ||
       run.grades[question] !== null ||
       run.phase === 'finished'
@@ -562,8 +690,9 @@ export default function Home() {
       setGuide({ ...guide, stage: 'find', match: false, message: '' });
   }
   function choose(index: number, option: number) {
+    if (view !== 'study') return;
     if (mode !== 'read') {
-      announce('解答を選ぶときは「読む」に切り替えよう。');
+      announce('書き込みをキャンセルしてから、左の□にチェックしよう。');
       return;
     }
     if (showGuide) {
@@ -580,6 +709,7 @@ export default function Home() {
     }
   }
   function submit(index = question) {
+    if (view !== 'study') return;
     const choice = showGuide ? practiceChoice : run.choices[index];
     if (choice < 0 || (showGuide && guide.stage !== 'answer')) return;
     const correct = choice === QUESTIONS[index].answer;
@@ -642,7 +772,7 @@ export default function Home() {
   }
   function advance() {
     if (guide.stage === 'done') {
-      startReview();
+      showSummary();
       return;
     }
     if (guide.stage === 'intro') {
@@ -661,7 +791,10 @@ export default function Home() {
         QUESTIONS[question].en,
         currentGuide.search,
       );
-    const next = nextGuide(guide, run.grades);
+    const next = nextGuide(
+      guide.stage === 'answer-feedback' ? { ...guide, match: true } : guide,
+      run.grades,
+    );
     setGuide(next);
     setActiveQuestion(next.question);
     if (next.stage === 'question' || next.stage === 'answer') {
@@ -671,7 +804,7 @@ export default function Home() {
     if (next.stage === 'find') setTool('ink');
     if (next.stage === 'done') {
       setTool('read');
-      setDrawer({ kind: 'results' });
+      showSummary();
     }
   }
   function toggleGuide(enabled: boolean) {
@@ -705,17 +838,21 @@ export default function Home() {
       setPeekQuestion(Number(target[1]));
     else setPeekQuestion(null);
     if (target) setActiveQuestion(Number(target[1]));
-    turn(target ? 1 : 0, unit);
+    if (review) {
+      setReviewKind('translation');
+      setFullTranslation(true);
+    }
+    turn(
+      target ? Number(target[1]) + 1 : 0,
+      unit,
+      review ? 'review:translation' : 'study',
+    );
   }
-  function startReview() {
+  function startReview(kind: ReviewKind = 'answers', index = question) {
+    capturePlace();
     setPeekQuestion(null);
-    player.current?.pause();
-    setReview(true);
-    setMode('read');
-    setFullTranslation(true);
-    setDrawer(null);
-    setCompare(false);
-    turn(0);
+    setView('review');
+    changeReview(kind, index);
   }
   function restart() {
     setPeekQuestion(null);
@@ -724,7 +861,8 @@ export default function Home() {
     setGuide(createGuide());
     setPracticeChoice(-1);
     setActiveQuestion(0);
-    setReview(false);
+    restoring.current = false;
+    setView('study');
     setMarks([]);
     setDraft([]);
     setTranslated(new Set());
@@ -732,7 +870,23 @@ export default function Home() {
     setMode('read');
     setCompare(false);
     setListening(null);
+    setAudioCheckpoint(initialPlayback());
+    pageOffsets.current = {};
     turn(0);
+  }
+  function nextQuestion() {
+    const next = nextUnanswered(run.grades, question);
+    if (next < 0 || run.phase === 'finished') showSummary();
+    else {
+      setActiveQuestion(next);
+      setMode('read');
+      turn(next + 1);
+    }
+  }
+  function retryGuideAnswer() {
+    setGuide({ ...guide, stage: 'answer', message: '' });
+    setPracticeChoice(-1);
+    setMode('read');
   }
 
   useEffect(() => {
@@ -826,10 +980,7 @@ export default function Home() {
     return () => lifecycle.abort();
   }, []);
 
-  function renderText(
-    unit: Sentence,
-    options: { className?: string; onRead?: () => void } = {},
-  ) {
+  function renderText(unit: Sentence, options: { className?: string } = {}) {
     return (
       <GuideRegion
         anchor={unit.id}
@@ -845,16 +996,18 @@ export default function Home() {
   function renderQuestion(index: number) {
     const q = QUESTIONS[index],
       graded = run.grades[index] !== null,
-      revealed = !showGuide && (graded || run.phase === 'finished');
-    const choice = showGuide
-      ? guide.stage === 'answer-feedback'
-        ? (guide.answerOption ?? practiceChoice)
-        : practiceChoice
-      : run.choices[index];
+      revealed = review || (!showGuide && (graded || run.phase === 'finished'));
+    const choice =
+      showGuide && index === guide.question
+        ? guide.stage === 'answer-feedback'
+          ? (guide.answerOption ?? practiceChoice)
+          : practiceChoice
+        : run.choices[index];
     const locked =
+      review ||
       peekQuestion !== null ||
       (showGuide
-        ? guide.stage !== 'answer'
+        ? guide.stage !== 'answer' || index !== guide.question
         : graded || run.phase === 'finished');
     return (
       <section className="question-block" key={index}>
@@ -868,32 +1021,34 @@ export default function Home() {
             <b>問{index + 1}</b>
             {renderText({ id: `q${index}`, en: q.en, ja: q.ja })}
             <span
-              className={`answer-box ${revealed ? (run.grades[index] ? 'correct-mark' : 'wrong-mark') : ''}`}
+              className={`answer-box ${revealed && graded ? (run.grades[index] ? 'correct-mark' : 'wrong-mark') : ''}`}
             >
               {index + 1}
             </span>
           </div>
         </GuideRegion>
-        {showGuide && guide.stage.startsWith('answer') && (
-          <aside className="answer-reference">
-            <div>
-              <span className="reference-number">3</span>
-              <strong>見つけた根拠</strong>
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setTool('read');
-                  turn(0, q.evidence);
-                }}
-              >
-                本文で確認
-                <ArrowRight size={14} />
-              </Button>
-            </div>
-            <span lang="en">{getUnit(q.evidence)!.en}</span>
-            <p>{GUIDE_CONTENT[index].summary}</p>
-          </aside>
-        )}
+        {showGuide &&
+          index === guide.question &&
+          guide.stage.startsWith('answer') && (
+            <aside className="answer-reference">
+              <div>
+                <span className="reference-number">3</span>
+                <strong>見つけた根拠</strong>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setTool('read');
+                    turn(0, q.evidence);
+                  }}
+                >
+                  本文で確認
+                  <ArrowRight size={14} />
+                </Button>
+              </div>
+              <span lang="en">{getUnit(q.evidence)!.en}</span>
+              <p>{GUIDE_CONTENT[index].summary}</p>
+            </aside>
+          )}
         <GuideRegion
           anchor={`choices-${index}`}
           target={target}
@@ -918,19 +1073,17 @@ export default function Home() {
                   <RadioGroupItem
                     value={String(option)}
                     className="choice-radio"
-                    aria-label={`選択肢${option + 1}`}
+                    aria-label={`選択肢${option + 1}にチェック`}
                     disabled={run.eliminated[index].includes(option)}
                   />
-                  <span aria-hidden="true">{option + 1}</span>
+                  <small className="choice-index" aria-hidden="true">
+                    {option + 1}
+                  </small>
+                  <span aria-hidden="true">
+                    {choice === option && <Check size={18} strokeWidth={3} />}
+                  </span>
                 </div>
-                {renderText(
-                  { id: `q${index}o${option}`, en, ja },
-                  {
-                    onRead: () => {
-                      if (!locked) choose(index, option);
-                    },
-                  },
-                )}
+                {renderText({ id: `q${index}o${option}`, en, ja })}
                 {!showGuide && !locked && (
                   <Button
                     variant="ghost"
@@ -964,7 +1117,9 @@ export default function Home() {
             onClick={() => {
               setActiveQuestion(index);
               setCompare(true);
-              setTool(graded || run.phase === 'finished' ? 'read' : 'ink');
+              setTool(
+                review || graded || run.phase === 'finished' ? 'read' : 'ink',
+              );
               turn(0);
             }}
           >
@@ -975,15 +1130,15 @@ export default function Home() {
         )}
         {revealed && (
           <p className="teacher-note">
-            <b>{run.grades[index] ? '正解' : `正解は ${q.answer + 1}`}</b>
+            <b>
+              {run.grades[index] === null
+                ? `未回答 · 正解は ${q.answer + 1}`
+                : run.grades[index]
+                  ? '正解'
+                  : `正解は ${q.answer + 1}`}
+            </b>
             {q.explanation}
           </p>
-        )}
-        {!showGuide && !locked && run.choices[index] >= 0 && (
-          <Button className="grade-button" onClick={() => submit(index)}>
-            問{index + 1}を確定
-            <Check size={16} />
-          </Button>
         )}
       </section>
     );
@@ -991,9 +1146,11 @@ export default function Home() {
   const title =
     drawer?.kind === 'word'
       ? drawer.entry.title
-      : drawer?.kind === 'results'
-        ? '今回の整理'
-        : '自分の攻略ノート';
+      : drawer?.kind === 'tools'
+        ? '紙面に書き込む'
+        : drawer?.kind === 'menu'
+          ? '続け方を選ぶ'
+          : '自分の攻略ノート';
   const filters = [
     { id: 'note', label: '整理' },
     { id: 'word', label: '単語' },
@@ -1026,379 +1183,509 @@ export default function Home() {
     >
       <main className={`exam-app tool-${mode} ${review ? 'review-mode' : ''}`}>
         <header className="app-header">
+          {view === 'study' ? (
+            <Button
+              variant="ghost"
+              className="header-menu"
+              onClick={() => {
+                player.current?.pause();
+                setDrawer({ kind: 'menu' });
+              }}
+            >
+              <Menu size={19} />
+              中断
+            </Button>
+          ) : review ? (
+            <Button
+              variant="ghost"
+              className="header-menu"
+              onClick={showSummary}
+            >
+              <ArrowLeft size={18} />
+              結果
+            </Button>
+          ) : (
+            <BookOpen size={23} />
+          )}
           <div className="app-name">
-            攻略ノート<small>英語・リーディング</small>
+            {view === 'study' ? '問題冊子' : review ? '復習' : '学習記録'}
+            <small>英語・リーディング</small>
           </div>
           <div className="session-clock">
             <small>
-              {review
-                ? '復習'
+              {view !== 'study' || drawer
+                ? '時計停止'
                 : guided
-                  ? 'ガイド中・時計停止'
-                  : drawer
-                    ? '一時停止'
-                    : '残り時間'}
+                  ? 'ガイドあり'
+                  : '残り時間'}
             </small>
-            {guided || review
+            {guided || view !== 'study'
               ? `${run.grades.filter((value) => value !== null).length} / 3 問`
               : formatTime(run.remainingMs)}
           </div>
           <Button
             variant="ghost"
             className="notebook-button"
-            onClick={() => openNotebook()}
+            onClick={() =>
+              view === 'study' ? openNotebook() : startReview('notebook')
+            }
             aria-label={`攻略ノート ${entries.length}件`}
           >
             <BookMarked size={21} />
             <span>{entries.length}</span>
           </Button>
         </header>
-        <div className="paper-scroll" ref={scroll} data-paper-scroll>
-          <div className="paper-meta">
-            <span>
-              {showGuide
-                ? page === 0
-                  ? '本文ページ'
-                  : '設問・選択肢ページ'
-                : review
-                  ? '全訳・音声で復習'
-                  : '3分で3問に挑戦'}
-            </span>
-            <span>
-              {showGuide ? `問${question + 1} / 3` : `${score} / 6 点`}
-            </span>
-          </div>
-          {review && (
-            <section className="review-options">
-              <label>
-                全訳を表示
-                <Switch
-                  checked={fullTranslation}
-                  onCheckedChange={setFullTranslation}
-                />
-              </label>
-              <span>英文の下に日本語を表示</span>
-            </section>
-          )}
-          {page === 0 && !showGuide && (
-            <section className="evidence-picker">
-              <span>
-                <PencilLine size={15} />
-                {review ? '根拠を見比べる' : '線を引く設問'}
-              </span>
-              <div>
-                {QUESTIONS.map((_, i) => (
+        {view === 'summary' ? (
+          <SessionSummary
+            run={run}
+            onResume={resumeStudy}
+            onRestart={restart}
+            onReview={startReview}
+          />
+        ) : (
+          <>
+            {review && (
+              <nav className="review-navigation" aria-label="復習の種類">
+                {[
+                  { id: 'answers', label: '解説', icon: BookOpen },
+                  { id: 'translation', label: '全訳', icon: Languages },
+                  { id: 'audio', label: '音声・音読', icon: Headphones },
+                  { id: 'notebook', label: 'ノート', icon: BookMarked },
+                ].map((item) => (
                   <Button
+                    key={item.id}
                     variant="ghost"
-                    key={i}
-                    className={i === question ? 'active' : ''}
-                    onClick={() => setActiveQuestion(i)}
+                    aria-current={reviewKind === item.id ? 'page' : undefined}
+                    onClick={() => changeReview(item.id as ReviewKind)}
                   >
-                    問{i + 1}
+                    <item.icon size={18} />
+                    {item.label}
                   </Button>
                 ))}
-              </div>
-            </section>
-          )}
-          <article className="exam-sheet" key={page}>
-            <h1>英語（リーディング）</h1>
-            <div className="exam-heading">
-              <b>第1問</b>
-              <span>（配点 6）</span>
-            </div>
-            {page === 0 ? (
-              <>
-                {renderText(INTRO, { className: 'exam-intro' })}
-                <GuideRegion
-                  anchor="passage"
-                  target={target}
-                  annotation={annotation}
-                  className="passage-region"
-                >
-                  {showGuide && guide.stage === 'find' && (
-                    <p className="passage-search">
-                      <span>問{question + 1}で探すこと</span>
-                      {currentGuide.search}
-                    </p>
+              </nav>
+            )}
+            <div
+              className={`paper-scroll ${swipe.drag ? 'is-swiping' : ''}`}
+              ref={scroll}
+              data-paper-scroll
+              onScroll={() => {
+                if (scroll.current)
+                  pageOffsets.current[`${pageSpace}:${page}`] =
+                    scroll.current.scrollTop;
+              }}
+              {...swipe.handlers}
+            >
+              {review && reviewKind === 'notebook' ? (
+                <div className="review-notebook">
+                  <div
+                    className="notebook-filter-buttons"
+                    aria-label="ノートの種類"
+                  >
+                    {filters.map((filter) => (
+                      <Button
+                        key={filter.id}
+                        variant="ghost"
+                        aria-pressed={notebookFilter === filter.id}
+                        onClick={() => setNotebookFilter(filter.id)}
+                      >
+                        {filter.label}
+                      </Button>
+                    ))}
+                  </div>
+                  <NotebookList
+                    entries={entries}
+                    filter={notebookFilter}
+                    onView={viewSavedUnit}
+                  />
+                </div>
+              ) : (
+                <>
+                  <div className="paper-meta">
+                    <span>
+                      {showGuide
+                        ? page === 0
+                          ? '本文ページ'
+                          : '設問・選択肢ページ'
+                        : review
+                          ? '全訳・音声で復習'
+                          : '3分で3問に挑戦'}
+                    </span>
+                    <span>
+                      {showGuide ? `問${question + 1} / 3` : `${score} / 6 点`}
+                    </span>
+                  </div>
+                  {review && reviewKind !== 'answers' && (
+                    <section className="review-options">
+                      <label>
+                        全訳を表示
+                        <Switch
+                          checked={fullTranslation}
+                          onCheckedChange={setFullTranslation}
+                        />
+                      </label>
+                      <span>英文の下に日本語を表示</span>
+                    </section>
                   )}
-                  <section className="notice">
-                    <h2>
-                      {renderText({
-                        id: 'title',
-                        en: 'Night at the Museum',
-                        ja: '夜の博物館',
-                      })}
-                    </h2>
-                    {PASSAGE.map((section, index) => (
-                      <div key={index}>
-                        {section.title && (
-                          <h3>
-                            {renderText({
-                              id: `heading${index}`,
-                              en: section.title,
-                              ja: section.titleJa!,
-                            })}
-                          </h3>
-                        )}
-                        {section.sentences.map((sentence) => (
-                          <div key={sentence.id}>
-                            {renderText(sentence, {
-                              className: `passage-sentence ${listening !== null && SENTENCES[listening].id === sentence.id ? 'sentence-playing' : ''}`,
-                              onRead: review
-                                ? () =>
-                                    player.current?.playSentence(
-                                      SENTENCES.findIndex(
-                                        (item) => item.id === sentence.id,
-                                      ),
-                                    )
-                                : undefined,
-                            })}
-                          </div>
+                  {page === 0 && !showGuide && (
+                    <section className="evidence-picker">
+                      <span>
+                        <PencilLine size={15} />
+                        {review ? '根拠を見比べる' : '線を引く設問'}
+                      </span>
+                      <div>
+                        {QUESTIONS.map((_, i) => (
+                          <Button
+                            variant="ghost"
+                            key={i}
+                            className={i === question ? 'active' : ''}
+                            onClick={() => setActiveQuestion(i)}
+                          >
+                            問{i + 1}
+                          </Button>
                         ))}
                       </div>
-                    ))}
-                  </section>
-                </GuideRegion>
-                <p className="paper-instruction">
-                  {MODES.find((tool) => tool.id === mode)!.help}
-                </p>
-              </>
-            ) : peekQuestion !== null ? (
-              renderQuestion(peekQuestion)
-            ) : showGuide ? (
-              renderQuestion(question)
-            ) : (
-              QUESTIONS.map((_, index) => renderQuestion(index))
-            )}
-            <footer className="paper-footer">
-              <span>― {page + 1} ―</span>
-              <small>練習問題 01</small>
-            </footer>
-            <Button
-              variant="ghost"
-              className="page-corner"
-              aria-label={page === 0 ? '設問へめくる' : '本文へ戻る'}
-              onClick={() => turn(page === 0 ? 1 : 0)}
-            >
-              {page === 0 ? <ArrowRight /> : <ArrowLeft />}
-            </Button>
-          </article>
-          {compare && page === 0 && !showGuide && (
-            <aside className="comparison-sheet">
-              <div className="comparison-header">
-                <span>本文と設問を見比べる</span>
-                <Button
-                  variant="ghost"
-                  aria-label="挟んだ設問を閉じる"
-                  onClick={() => setCompare(false)}
-                >
-                  <X size={18} />
-                </Button>
-              </div>
-              {renderQuestion(question)}
-            </aside>
-          )}
-          {run.phase === 'finished' && !showGuide && !review && (
-            <section className="run-result">
-              <strong>{score} / 6 点</strong>
-              <p>解答と根拠を見比べて、次の一周へ。</p>
-              <Button onClick={startReview}>
-                <Headphones />
-                全訳・音声で復習
-              </Button>
-              <Button variant="outline" onClick={restart}>
-                もう一度解く
-              </Button>
-            </section>
-          )}
-          <div className="notebook-invite">
-            <BookMarked size={17} />
-            <span>整理メモ・単語・文・次に確認すること</span>
-            <Button variant="ghost" onClick={() => openNotebook()}>
-              ノートを見る
-            </Button>
-          </div>
-          <p className="app-caption">
-            オリジナル演習問題 ·
-            共通テストの得点や偏差値を推定するものではありません
-          </p>
-        </div>
-        <div className="bottom-workspace">
-          {notice && (
-            <div className="action-message" role="status">
-              <span>{notice.text}</span>
-              {notice.undo && (
-                <Button variant="ghost" onClick={notice.undo}>
-                  取り消す
-                </Button>
+                    </section>
+                  )}
+                  <article
+                    className={`exam-sheet turn-${turnDirection.current > 0 ? 'forward' : 'back'}`}
+                    key={page}
+                    style={
+                      swipe.drag
+                        ? {
+                            transform: `translateX(${swipe.drag}px) rotateY(${swipe.drag / -14}deg)`,
+                            animation: 'none',
+                          }
+                        : undefined
+                    }
+                  >
+                    <h1>英語（リーディング）</h1>
+                    <div className="exam-heading">
+                      <b>第1問</b>
+                      <span>（配点 6）</span>
+                    </div>
+                    {page === 0 ? (
+                      <>
+                        {renderText(INTRO, { className: 'exam-intro' })}
+                        <GuideRegion
+                          anchor="passage"
+                          target={target}
+                          annotation={annotation}
+                          className="passage-region"
+                        >
+                          {showGuide && guide.stage === 'find' && (
+                            <p className="passage-search">
+                              <span>問{question + 1}で探すこと</span>
+                              {currentGuide.search}
+                            </p>
+                          )}
+                          <section className="notice">
+                            <h2>
+                              {renderText({
+                                id: 'title',
+                                en: 'Night at the Museum',
+                                ja: '夜の博物館',
+                              })}
+                            </h2>
+                            {PASSAGE.map((section, index) => (
+                              <div key={index}>
+                                {section.title && (
+                                  <h3>
+                                    {renderText({
+                                      id: `heading${index}`,
+                                      en: section.title,
+                                      ja: section.titleJa!,
+                                    })}
+                                  </h3>
+                                )}
+                                {section.sentences.map((sentence) => (
+                                  <div key={sentence.id}>
+                                    {renderText(sentence, {
+                                      className: `passage-sentence ${listening !== null && SENTENCES[listening].id === sentence.id ? 'sentence-playing' : ''}`,
+                                    })}
+                                    {review && reviewKind === 'audio' && (
+                                      <Button
+                                        variant="ghost"
+                                        className="sentence-play"
+                                        onClick={() =>
+                                          player.current?.playSentence(
+                                            SENTENCES.findIndex(
+                                              (item) => item.id === sentence.id,
+                                            ),
+                                          )
+                                        }
+                                      >
+                                        <Play size={14} />
+                                        この文を聴く
+                                      </Button>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ))}
+                          </section>
+                        </GuideRegion>
+                        <p className="paper-instruction">
+                          {MODES.find((tool) => tool.id === mode)!.help}
+                        </p>
+                      </>
+                    ) : (
+                      renderQuestion(page - 1)
+                    )}
+                    <footer className="paper-footer">
+                      <span>― {page + 1} ―</span>
+                      <small>練習問題 01</small>
+                    </footer>
+                    <Button
+                      variant="ghost"
+                      className="page-corner"
+                      aria-label={
+                        page < 3
+                          ? `${BOOK_PAGES[page + 1]}へめくる`
+                          : '前のページへ'
+                      }
+                      onClick={() =>
+                        turn(adjacentPage(page, page < 3 ? 1 : -1))
+                      }
+                    >
+                      {page < 3 ? <ArrowRight /> : <ArrowLeft />}
+                    </Button>
+                  </article>
+                  {compare && page === 0 && !showGuide && (
+                    <aside className="comparison-sheet">
+                      <div className="comparison-header">
+                        <span>本文と設問を見比べる</span>
+                        <Button
+                          variant="ghost"
+                          aria-label="挟んだ設問を閉じる"
+                          onClick={() => setCompare(false)}
+                        >
+                          <X size={18} />
+                        </Button>
+                      </div>
+                      {renderQuestion(question)}
+                    </aside>
+                  )}
+                  <div className="notebook-invite">
+                    <BookMarked size={17} />
+                    <span>整理メモ・単語・文・次に確認すること</span>
+                    <Button variant="ghost" onClick={() => openNotebook()}>
+                      ノートを見る
+                    </Button>
+                  </div>
+                  <p className="app-caption">
+                    オリジナル演習問題 ·
+                    共通テストの得点や偏差値を推定するものではありません
+                  </p>
+                </>
               )}
-              <Button
-                variant="ghost"
-                aria-label="通知を閉じる"
-                onClick={() => setNotice(null)}
-              >
-                <X size={15} />
-              </Button>
             </div>
-          )}
-          {review ? (
-            <div className="review-dock">
-              <ReviewPlayer
-                ref={player}
-                suspended={drawer !== null || page !== 0 || mode !== 'read'}
-                onSentenceChange={setListening}
-                onPlay={() => {
-                  setMode('read');
-                  if (page !== 0) turn(0);
-                }}
-              />
-              <Button
-                variant="ghost"
-                className="review-exit"
-                onClick={() => {
-                  player.current?.pause();
-                  setReview(false);
-                  setListening(null);
-                }}
-              >
-                解答へ戻る
-              </Button>
-            </div>
-          ) : peekQuestion !== null ? (
-            <div className="peek-guide">
-              <span>
-                ノートの問{peekQuestion + 1}
-                を確認中。ガイドの続きは残っています。
-              </span>
-              <Button onClick={returnToGuide}>
-                ガイドへ戻る
-                <ArrowRight size={15} />
-              </Button>
-            </div>
-          ) : showGuide ? (
-            <StudyGuide
-              state={guide}
-              target={target}
-              location={targetLocation}
-              mode={mode}
-              selectedOption={selected}
-              nextQuestion={run.grades.findIndex(
-                (grade, index) => grade === null && index !== question,
+            <div className="bottom-workspace">
+              {notice && (
+                <div className="action-message" role="status">
+                  <span>{notice.text}</span>
+                  {notice.undo && (
+                    <Button variant="ghost" onClick={notice.undo}>
+                      取り消す
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    aria-label="通知を閉じる"
+                    onClick={() => setNotice(null)}
+                  >
+                    <X size={16} />
+                  </Button>
+                </div>
               )}
-              onNext={advance}
-              onSubmit={() => submit()}
-              onTarget={() => showTarget()}
-              onFind={findEvidence}
-            />
-          ) : (
-            <div className="free-action">
-              <span>
-                {run.combo > 1
-                  ? `${run.combo}問連続正解`
-                  : run.phase === 'ready'
-                    ? '設問を先に見るのもOK'
-                    : run.phase === 'finished'
-                      ? '演習終了'
-                      : '根拠を探して、解答を確定しよう'}
-              </span>
-              <Button
-                onClick={() => {
-                  if (run.phase === 'ready')
-                    setRun((previous) =>
-                      runReducer(previous, { type: 'start' }),
-                    );
-                  else if (run.phase === 'finished') startReview();
-                  else if (
-                    run.choices[question] >= 0 &&
-                    run.grades[question] === null
-                  )
-                    submit();
-                  else turn(page === 0 ? 1 : 0);
-                }}
-              >
-                {run.phase === 'ready'
-                  ? '演習を始める'
-                  : run.phase === 'finished'
-                    ? '復習する'
-                    : run.choices[question] >= 0 &&
-                        run.grades[question] === null
-                      ? `問${question + 1}を確定`
-                      : page === 0
-                        ? '設問を見る'
-                        : '本文を見る'}
-                <ArrowRight size={16} />
-              </Button>
-            </div>
-          )}
-          <div className="thumb-navigation">
-            <nav aria-label="問題冊子のページ">
-              <Button
-                variant="ghost"
-                aria-current={page === 0 ? 'page' : undefined}
-                onClick={() => turn(0)}
-              >
-                <ArrowLeft size={15} />
-                本文
-              </Button>
-              <Button
-                variant="ghost"
-                aria-current={page === 1 ? 'page' : undefined}
-                onClick={() => turn(1)}
-              >
-                設問
-                <ArrowRight size={15} />
-              </Button>
-            </nav>
-            <label className="guide-switch">
-              <Compass size={16} />
-              ガイド
-              <Switch
-                checked={guided}
-                onCheckedChange={toggleGuide}
-                disabled={review}
-              />
-            </label>
-            {mode === 'ink' && (
-              <Button
-                variant="ghost"
-                className="undo-ink"
-                aria-label="最後の線を取り消す"
-                disabled={
-                  !marks.some((mark) => mark.question === question) ||
-                  run.grades[question] !== null ||
-                  run.phase === 'finished'
-                }
-                onClick={undoInk}
-              >
-                <RotateCcw size={17} />
-              </Button>
-            )}
-          </div>
-          <RadioGroup
-            className="tool-dock"
-            value={mode}
-            onValueChange={(value) => {
-              if (value) setTool(value as ToolMode);
-            }}
-            aria-label="指で操作するモード"
-          >
-            {MODES.map((tool) => (
-              <label
-                htmlFor={`tool-${tool.id}`}
-                className={mode === tool.id ? 'active-tool' : ''}
-                key={tool.id}
-              >
-                <RadioGroupItem
-                  id={`tool-${tool.id}`}
-                  value={tool.id}
-                  className="sr-only"
+              {review ? (
+                <>
+                  {reviewKind === 'audio' && (
+                    <div className="review-dock">
+                      <ReviewPlayer
+                        ref={player}
+                        checkpoint={audioCheckpoint}
+                        onCheckpoint={setAudioCheckpoint}
+                        suspended={
+                          drawer !== null || page !== 0 || mode !== 'read'
+                        }
+                        onSentenceChange={setListening}
+                        onPlay={() => {
+                          setMode('read');
+                          if (page !== 0) turn(0);
+                        }}
+                      />
+                    </div>
+                  )}
+                  <div className="review-return">
+                    <Button variant="outline" onClick={showSummary}>
+                      <ArrowLeft size={16} />
+                      結果へ戻る
+                    </Button>
+                    <Button
+                      onClick={run.phase === 'finished' ? restart : resumeStudy}
+                    >
+                      {run.phase === 'finished' ? 'もう一度挑戦' : '解答を再開'}
+                      <ArrowRight size={16} />
+                    </Button>
+                  </div>
+                </>
+              ) : peekQuestion !== null ? (
+                <div className="peek-guide">
+                  <span>保存した問{peekQuestion + 1}を確認中</span>
+                  <Button onClick={returnToGuide}>
+                    ガイドに戻る
+                    <ArrowRight size={15} />
+                  </Button>
+                </div>
+              ) : showGuide ? (
+                <StudyGuide
+                  state={guide}
+                  target={target}
+                  location={targetLocation}
+                  mode={mode}
+                  selectedOption={selected}
+                  nextQuestion={run.grades.findIndex(
+                    (grade, index) => grade === null && index !== question,
+                  )}
+                  onNext={advance}
+                  onSubmit={() => submit()}
+                  onTarget={() => showTarget()}
+                  onFind={findEvidence}
+                  onRetry={retryGuideAnswer}
+                  onReview={() => startReview('answers', question)}
                 />
-                <tool.icon size={20} />
-                <span>{tool.label}</span>
-              </label>
-            ))}
-          </RadioGroup>
-        </div>
+              ) : (
+                <div className="free-study-action">
+                  <strong>
+                    {run.phase === 'finished'
+                      ? '解答が終わりました'
+                      : run.grades[question] !== null
+                        ? `問${question + 1} ${run.grades[question] ? '正解！' : '解説を確認しよう'}`
+                        : run.phase === 'ready'
+                          ? '左の□にチェックして答えよう'
+                          : `問${question + 1} · ${run.choices[question] >= 0 ? `選択肢 ${run.choices[question] + 1} を選択中` : '答えを1つ選ぼう'}`}
+                  </strong>
+                  <Button
+                    onClick={() => {
+                      if (run.phase === 'finished') showSummary();
+                      else if (run.grades[question] !== null) nextQuestion();
+                      else if (run.choices[question] >= 0) submit();
+                      else if (run.phase === 'ready') {
+                        setRun((previous) =>
+                          runReducer(previous, { type: 'start' }),
+                        );
+                        turn(question + 1);
+                      } else turn(question + 1);
+                    }}
+                    disabled={
+                      run.phase === 'playing' &&
+                      run.grades[question] === null &&
+                      run.choices[question] < 0 &&
+                      page > 0
+                    }
+                  >
+                    {run.phase === 'finished'
+                      ? '結果・復習へ進む'
+                      : run.grades[question] !== null
+                        ? '次の問へ'
+                        : run.choices[question] >= 0
+                          ? '解答をチェック'
+                          : run.phase === 'ready'
+                            ? '演習を始める'
+                            : '左の□にチェック'}
+                    <ArrowRight size={17} />
+                  </Button>
+                  {run.grades[question] !== null && (
+                    <Button
+                      variant="ghost"
+                      onClick={() => startReview('answers', question)}
+                    >
+                      この問を復習
+                    </Button>
+                  )}
+                </div>
+              )}
+              {!(review && reviewKind === 'notebook') && (
+                <>
+                  <div
+                    className={`paper-utility ${mode !== 'read' ? 'using-tool' : ''}`}
+                  >
+                    <span>
+                      {mode === 'ink'
+                        ? '1回なぞると線を引きます'
+                        : mode === 'stock'
+                          ? 'なぞった文を対訳と保存'
+                          : mode === 'translate'
+                            ? '訳を見る文をタップ'
+                            : '単語はタップで意味を確認'}
+                    </span>
+                    {mode !== 'read' ? (
+                      <Button variant="outline" onClick={() => setTool('read')}>
+                        キャンセル
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          player.current?.pause();
+                          setDrawer({ kind: 'tools' });
+                        }}
+                      >
+                        <PencilLine size={16} />
+                        書き込む
+                      </Button>
+                    )}
+                    {view === 'study' && (
+                      <Button
+                        variant="ghost"
+                        className="help-exit"
+                        onClick={() => {
+                          player.current?.pause();
+                          setDrawer({ kind: 'menu' });
+                        }}
+                      >
+                        わからない・中断
+                      </Button>
+                    )}
+                  </div>
+                  <nav className="book-pager" aria-label="問題冊子のページ">
+                    <Button
+                      variant="ghost"
+                      disabled={page === 0}
+                      aria-label="前のページ"
+                      onClick={() => {
+                        setTool('read');
+                        turn(adjacentPage(page, -1));
+                      }}
+                    >
+                      <ArrowLeft size={19} />
+                    </Button>
+                    <span>
+                      <strong>
+                        {BOOK_PAGES[page]}{' '}
+                        <small>
+                          {page + 1} / {BOOK_PAGES.length}
+                        </small>
+                      </strong>
+                      <small>左右にスワイプでめくる</small>
+                    </span>
+                    <Button
+                      variant="ghost"
+                      disabled={page === BOOK_PAGES.length - 1}
+                      aria-label="次のページ"
+                      onClick={() => {
+                        setTool('read');
+                        turn(adjacentPage(page, 1));
+                      }}
+                    >
+                      <ArrowRight size={19} />
+                    </Button>
+                  </nav>
+                </>
+              )}
+            </div>
+          </>
+        )}
         <Sheet
           open={drawer !== null}
           onOpenChange={(open) => {
@@ -1415,7 +1702,7 @@ export default function Home() {
               <SheetTitle>{title}</SheetTitle>
               <Button
                 variant="ghost"
-                aria-label="ノートを閉じる"
+                aria-label="パネルを閉じる"
                 onClick={() => setDrawer(null)}
               >
                 <X size={21} />
@@ -1424,9 +1711,13 @@ export default function Home() {
             <SheetDescription>
               {drawer?.kind === 'word'
                 ? 'タップした単語の意味。文と一緒に残せます。'
-                : storageAvailable
-                  ? 'この端末に保存。ガイドを切っても残ります。'
-                  : 'このブラウザーでは、開いている間だけ保存されます。'}
+                : drawer?.kind === 'tools'
+                  ? '1回使うと、いつものタップ・ページめくりに戻ります。'
+                  : drawer?.kind === 'menu'
+                    ? '今は時計を止めています。問題と下線は残ります。'
+                    : storageAvailable
+                      ? 'この端末に保存。ガイドを切っても残ります。'
+                      : 'このブラウザーでは、開いている間だけ保存されます。'}
             </SheetDescription>
             {drawer?.kind === 'notebook' && (
               <RadioGroup
@@ -1494,105 +1785,111 @@ export default function Home() {
                     )}
                   </Button>
                 </>
-              ) : drawer?.kind === 'results' ? (
-                <>
-                  <div className="result-score">
-                    <strong>
-                      {score}
-                      <small> / 6点</small>
-                    </strong>
-                    <span>最初に選んだ解答の得点</span>
-                  </div>
-                  {QUESTIONS.map((q, i) => (
-                    <div className="result-line" key={i}>
+              ) : drawer?.kind === 'tools' ? (
+                <div className="sheet-action-list">
+                  {[
+                    {
+                      id: 'ink',
+                      icon: PencilLine,
+                      label: '線を引く',
+                      help: '大事な部分を1回なぞる',
+                    },
+                    {
+                      id: 'stock',
+                      icon: BookmarkPlus,
+                      label: '文を保存',
+                      help: '訳せなかった箇所をなぞり、文全体と訳を保存',
+                    },
+                    {
+                      id: 'translate',
+                      icon: Languages,
+                      label: 'この文の訳を見る',
+                      help: '文をタップすると、英文の下に日本語',
+                    },
+                  ].map((tool) => (
+                    <button
+                      key={tool.id}
+                      disabled={
+                        tool.id === 'ink' &&
+                        (review ||
+                          run.phase === 'finished' ||
+                          run.grades[question] !== null)
+                      }
+                      onClick={() => {
+                        setDrawer(null);
+                        setTool(tool.id as ToolMode);
+                      }}
+                    >
+                      <tool.icon size={22} />
                       <span>
-                        {run.grades[i] === null
-                          ? '—'
-                          : run.grades[i]
-                            ? '○'
-                            : '×'}
+                        <strong>{tool.label}</strong>
+                        <small>{tool.help}</small>
                       </span>
-                      <div>
-                        <b>
-                          問{i + 1}　{q.skill}
-                        </b>
-                        <p>{GUIDE_CONTENT[i].summary}</p>
-                      </div>
-                    </div>
+                      <ArrowRight size={17} />
+                    </button>
                   ))}
-                  <p className="storage-note">
-                    ガイドありでは、時間を気にせず解き方を練習できます。確認し直した内容はノートに残っています。
-                  </p>
-                  <Button className="save-word-button" onClick={startReview}>
-                    <Headphones />
-                    全訳・音声で復習
-                  </Button>
                   <Button
                     variant="ghost"
-                    className="save-word-button"
-                    onClick={() => openNotebook()}
+                    onClick={() => {
+                      undoInk();
+                      setDrawer(null);
+                    }}
+                    disabled={
+                      review ||
+                      !marks.some((mark) => mark.question === question) ||
+                      run.grades[question] !== null ||
+                      run.phase === 'finished'
+                    }
                   >
-                    整理ノートを見る
+                    <RotateCcw size={17} />
+                    直前の線を取り消す
                   </Button>
+                </div>
+              ) : drawer?.kind === 'menu' ? (
+                <div className="sheet-action-list">
+                  <button onClick={() => startReview('answers', question)}>
+                    <BookOpen size={23} />
+                    <span>
+                      <strong>わからないので、復習する</strong>
+                      <small>
+                        問{question + 1}の解説へ。あとで解答に戻れます。
+                      </small>
+                    </span>
+                    <ArrowRight size={18} />
+                  </button>
+                  <button onClick={showSummary}>
+                    <BookMarked size={23} />
+                    <span>
+                      <strong>ここまでで終了する</strong>
+                      <small>ここまでの結果と、復習の入口へ</small>
+                    </span>
+                    <ArrowRight size={18} />
+                  </button>
+                  <label className="menu-guide-setting">
+                    <span>
+                      <strong>解き方ガイド</strong>
+                      <small>オンにすると時計を止めて練習</small>
+                    </span>
+                    <Switch
+                      checked={guided}
+                      onCheckedChange={toggleGuide}
+                      disabled={review}
+                    />
+                  </label>
                   <Button
-                    variant="outline"
                     className="save-word-button"
-                    onClick={restart}
+                    onClick={() => setDrawer(null)}
                   >
-                    もう一度解く
+                    そのまま解き続ける
+                    <ArrowRight size={17} />
                   </Button>
-                </>
+                </div>
               ) : drawer?.kind === 'notebook' ? (
-                <>
-                  {entries.filter((entry) => entry.kind === drawer.filter)
-                    .length === 0 ? (
-                    <div className="empty-notebook">
-                      <BookMarked size={30} />
-                      <p>
-                        {drawer.filter === 'word'
-                          ? '「単語」に切り替えて、英文の単語をタップ。'
-                          : drawer.filter === 'sentence'
-                            ? '「文ストック」で、訳せなかった部分をなぞろう。文全体と日本語訳がここに残ります。'
-                            : drawer.filter === 'knowledge'
-                              ? '迷ったところ・取り違えた情報が、次に確認することとして残ります。'
-                              : 'ガイドで解き進めると、場面・探すこと・根拠が日本語でまとまります。'}
-                      </p>
-                    </div>
-                  ) : (
-                    entries
-                      .filter((entry) => entry.kind === drawer.filter)
-                      .map((entry) => (
-                        <article
-                          className={`notebook-entry entry-${entry.kind}`}
-                          key={entry.id}
-                        >
-                          <small>{entry.title}</small>
-                          {entry.en && <p lang="en">{entry.en}</p>}
-                          <strong>{entry.ja}</strong>
-                          {entry.excerpt && (
-                            <div className="saved-excerpt">
-                              なぞった部分：
-                              <span lang="en">{entry.excerpt}</span>
-                            </div>
-                          )}
-                          {entry.detail && (
-                            <p className="entry-detail">{entry.detail}</p>
-                          )}
-                          {entry.unit && (
-                            <Button
-                              variant="ghost"
-                              onClick={() => {
-                                viewSavedUnit(entry.unit!);
-                              }}
-                            >
-                              冊子で見る
-                              <ArrowRight size={14} />
-                            </Button>
-                          )}
-                        </article>
-                      ))
-                  )}
-                </>
+                <NotebookList
+                  entries={entries}
+                  filter={drawer.filter}
+                  onView={viewSavedUnit}
+                />
               ) : null}
             </div>
             <div className="drawer-footer">
@@ -1605,7 +1902,11 @@ export default function Home() {
                 {sound ? 'ON' : 'OFF'}
               </Button>
               <Button variant="outline" onClick={() => setDrawer(null)}>
-                冊子に戻る
+                {view === 'study'
+                  ? '問題に戻る'
+                  : review
+                    ? '復習に戻る'
+                    : '結果に戻る'}
               </Button>
             </div>
           </SheetContent>

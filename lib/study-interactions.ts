@@ -249,7 +249,7 @@ export function guideTarget(state: GuideState): GuideTarget | null {
   if (state.stage.startsWith('question'))
     return {
       anchor: `question-${question}`,
-      page: 1,
+      page: question + 1,
       step: 2,
       label: `問${question + 1}の設問文`,
     };
@@ -263,7 +263,7 @@ export function guideTarget(state: GuideState): GuideTarget | null {
         : 'passage';
     return {
       anchor,
-      page: /^q\d/.test(anchor) ? 1 : 0,
+      page: /^q\d/.test(anchor) ? Number(anchor[1]) + 1 : 0,
       step: 3,
       label: state.match ? `問${question + 1}の根拠` : 'なぞった箇所',
     };
@@ -271,14 +271,14 @@ export function guideTarget(state: GuideState): GuideTarget | null {
   if (state.stage === 'answer-feedback' && state.answerOption !== undefined)
     return {
       anchor: `q${question}o${state.answerOption}`,
-      page: 1,
+      page: question + 1,
       step: 4,
       label: `選んだ選択肢 ${state.answerOption + 1}`,
     };
   if (state.stage === 'answer' || state.stage === 'answer-feedback')
     return {
       anchor: `choices-${question}`,
-      page: 1,
+      page: question + 1,
       step: 4,
       label: `問${question + 1}の選択肢`,
     };
