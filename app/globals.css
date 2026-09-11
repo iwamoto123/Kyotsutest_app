@@ -363,31 +363,160 @@ button svg {
   width: 16px;
   height: 16px;
 }
-.guide-target {
-  outline: 2px solid #9bbaff;
-  outline-offset: 7px;
-  box-shadow: 0 0 0 9px #f2f6ff;
-  border-radius: 1px;
-  transition: box-shadow 0.2s;
+/* The same numbered bookmark connects the paper to the lower coach. */
+.guide-region {
+  min-width: 0;
 }
-.search-slip {
-  padding: 10px 13px;
-  margin: 0 1px 13px;
-  background: #f6f9ff;
-  border-left: 3px solid #5480d5;
-  box-shadow: 0 1px 2px #10275008;
+.is-guide-focus {
+  position: relative;
 }
-.search-slip > span {
+.is-guide-focus:before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  border-left: 2px solid var(--pen-blue);
+  border-top: 2px solid var(--pen-blue);
+  border-bottom: 2px solid var(--pen-blue);
+  border-radius: 2px 0 0 2px;
+  pointer-events: none;
+}
+.paper-focus-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 9px;
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--pen-blue);
+  text-align: left;
+  text-decoration: none;
+  animation: note-in 0.2s ease-out;
+}
+.focus-number {
+  display: inline-grid;
+  flex: 0 0 25px;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--pen-blue);
+  color: #fff;
+  font:
+    600 0.875rem/1 Arial,
+    sans-serif;
+}
+.focus-annotation {
+  padding: 10px 11px;
+  margin: 10px 0 16px;
+  background: #f1f6ff;
+  border-left: 2px solid #a8c5f4;
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  font-weight: 400;
+  line-height: 1.65;
+  color: #35567f;
+  text-align: left;
+  letter-spacing: 0;
+  animation: note-in 0.2s ease-out;
+}
+.focus-annotation > strong {
   display: block;
-  font-size: 12px;
-  color: #5574a8;
+  font-size: 0.875rem;
   margin-bottom: 3px;
 }
-.search-slip > strong {
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.5;
+.focus-annotation > span[lang='en'] {
   display: block;
+  font-family: 'Times New Roman', serif;
+  font-size: 1.0625rem;
+  margin-bottom: 3px;
+  color: #263e62;
+}
+.focus-annotation p {
+  margin: 0;
+}
+.annotation-success {
+  background: #edf7f2;
+  color: #246b50;
+  border-left-color: #78b39b;
+}
+.annotation-retry {
+  background: #fff5e6;
+  color: #825b23;
+  border-left-color: #cfa267;
+}
+.passage-search {
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: #355681;
+  padding: 0 0 10px;
+  margin: 0;
+}
+.passage-search > span {
+  display: block;
+  font-size: 0.75rem;
+  color: #63748b;
+  margin-bottom: 2px;
+}
+.stem-region {
+  margin-bottom: 16px;
+}
+.stem-region .question-stem {
+  margin-bottom: 0;
+}
+.answer-reference {
+  margin: 0 0 14px;
+  padding: 8px 10px 10px;
+  border: 1px solid #dce4ef;
+  background: #f8faff;
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  font-weight: 400;
+  color: #52667f;
+  line-height: 1.5;
+}
+.answer-reference > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.reference-number {
+  display: inline-grid;
+  width: 21px;
+  height: 21px;
+  place-items: center;
+  border: 1px solid #aebdd2;
+  border-radius: 5px;
+  font:
+    0.75rem/1 Arial,
+    sans-serif;
+}
+.answer-reference strong {
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+.answer-reference button {
+  min-height: 44px;
+  font-size: 0.875rem;
+  padding: 5px;
+  margin-left: auto;
+  color: var(--pen-blue);
+}
+.answer-reference > span[lang='en'] {
+  display: block;
+  font:
+    1.0625rem/1.5 'Times New Roman',
+    serif;
+  color: #2e405d;
+}
+.answer-reference p {
+  margin: 4px 0 0;
 }
 .question-block {
   margin-bottom: 27px;
@@ -404,7 +533,7 @@ button svg {
   white-space: nowrap;
   margin-top: 3px;
 }
-.question-stem > .english-unit {
+.question-stem > .text-region {
   flex: 1;
 }
 .answer-box {
@@ -447,7 +576,7 @@ button svg {
   border: 1px solid transparent;
   border-radius: 4px;
 }
-.choice-row > .english-unit {
+.choice-row > .text-region {
   flex: 1;
 }
 .choice-selected {
@@ -458,7 +587,7 @@ button svg {
   position: relative;
   flex: 0 0 37px;
   width: 37px;
-  height: 40px;
+  height: 44px;
   margin-top: -2px;
 }
 .number-wrap > span {
@@ -474,7 +603,7 @@ button svg {
   position: absolute;
   inset: 0;
   width: 37px;
-  height: 40px;
+  height: 44px;
   min-width: 37px;
   border: 0 !important;
   box-shadow: none !important;
@@ -653,132 +782,129 @@ button svg {
   position: relative;
 }
 .coach-card {
-  padding: 11px 14px 10px;
-  background: #f3f7ff;
-  border-bottom: 1px solid #d4dff0;
+  padding: 10px 14px 12px;
+  background: #fff;
+  border-bottom: 1px solid #dbe2ed;
+  box-shadow: inset 0 2px var(--pen-blue);
 }
-.coach-top {
+.coach-progress {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-  color: #4e6fa7;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: #6b7789;
+  font-size: 0.75rem;
+  margin-bottom: 5px;
 }
-.coach-top > span {
+.coach-progress ol {
   display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  white-space: nowrap;
-}
-.coach-top ol {
-  display: flex;
-  gap: 6px;
+  gap: 12px;
   list-style: none;
   margin: 0;
   padding: 0;
 }
-.coach-top li {
-  font-size: 12px;
+.coach-progress li {
   display: flex;
   align-items: center;
   gap: 3px;
-  color: #8394ae;
   white-space: nowrap;
 }
-.coach-top li > span {
-  font-size: 12px;
-  width: 13px;
-  height: 13px;
-  border: 1px solid #b7c4d7;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  line-height: 1;
+.coach-progress li > span {
+  font-variant-numeric: tabular-nums;
 }
-.coach-top li[aria-current='step'] {
-  color: #235dc1;
+.coach-progress li[aria-current='step'] {
+  color: var(--pen-blue);
   font-weight: 600;
 }
-.coach-top li[aria-current='step'] > span {
-  color: #fff;
-  background: #235dc1;
-  border-color: #235dc1;
+.coach-destination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 0;
+  margin-bottom: 3px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  color: var(--pen-blue);
+}
+.coach-destination > strong {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.destination-direction {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: #687a91;
+  flex-shrink: 0;
+}
+.destination-away {
+  background: #edf4ff;
+  padding: 6px 8px;
+  border-radius: 7px;
+}
+.destination-away .destination-direction {
+  color: var(--pen-blue);
 }
 .coach-body > strong {
   display: block;
-  font-size: 15px;
+  font-size: 1rem;
   font-weight: 600;
   line-height: 1.6;
+  color: #263750;
 }
 .coach-body > p {
-  font-size: 13px;
-  color: #657691;
-  line-height: 1.65;
-  margin: 3px 0 0;
+  font-size: 0.875rem;
+  color: #68758b;
+  line-height: 1.6;
+  margin: 4px 0 0;
 }
 .coach-action {
   display: flex;
-  justify-content: flex-end;
-  margin-top: 8px;
+  margin-top: 10px;
 }
 .coach-action button {
-  min-height: 44px;
+  width: 100%;
+  min-height: 46px;
   height: auto;
-  padding: 8px 16px;
-  font-size: 14px;
+  padding: 10px 13px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.875rem;
   white-space: normal;
   text-align: left;
-  background: #245cc1;
+  background: var(--pen-blue);
+  border-radius: 8px;
 }
-.coach-action button[data-variant='outline'] {
-  background: #fff;
-  color: #235dc1;
+.coach-action button:disabled {
+  background: #e9edf3;
+  color: #68778d;
+  opacity: 1;
 }
-.coach-positive {
-  background: #f0f8f7;
-  border-bottom-color: #cce2dc;
+.coach-gesture {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 10px;
+  margin-top: 8px;
+  border-radius: 6px;
+  background: #eff5ff;
+  color: var(--pen-blue);
+  font-size: 0.875rem;
+  line-height: 1.5;
 }
 .coach-positive .coach-body > strong {
-  color: #287263;
-}
-.coach-positive .coach-action button {
-  background: #287263;
-}
-.coach-retry {
-  background: #fff7eb;
-  border-bottom-color: #ead9bc;
+  color: #246b50;
 }
 .coach-retry .coach-body > strong {
-  color: #926327;
-}
-.coach-retry .coach-action button {
-  background: #9b6b30;
-}
-.expression-pair {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 10px;
-  font-size: 13px;
-  line-height: 1.6;
-  border-left: 2px solid #a9c4ee;
-  padding-left: 8px;
-  margin-top: 6px;
-}
-.expression-pair > span[lang='en'] {
-  font-family: 'Times New Roman', serif;
-  font-size: 15px;
-  color: #2e528b;
-}
-.expression-pair > span:last-child {
-  color: #607490;
-}
-.coach-save {
-  font-size: 12px;
-  color: #987649;
-  margin-top: 4px;
+  color: #825b23;
 }
 .thumb-navigation {
   display: flex;
@@ -794,7 +920,7 @@ button svg {
   flex: 1;
 }
 .thumb-navigation nav button {
-  min-height: 42px;
+  min-height: 44px;
   min-width: 71px;
   border-radius: 5px;
   padding: 5px 10px;
@@ -803,8 +929,8 @@ button svg {
   color: #68758a;
 }
 .thumb-navigation nav button[aria-current='page'] {
-  background: #e8f0ff;
-  color: #2355ac;
+  background: #e9edf3;
+  color: #344760;
 }
 .guide-switch {
   font-size: 13px;
@@ -820,7 +946,7 @@ button svg {
 }
 .undo-ink {
   min-height: 44px;
-  min-width: 36px;
+  min-width: 44px;
   padding: 7px;
   color: #4c6590;
 }
@@ -846,8 +972,10 @@ button svg {
   cursor: pointer;
 }
 .tool-dock label > span {
-  font-size: 12px;
-  white-space: nowrap;
+  font-size: 0.875rem;
+  line-height: 1.25;
+  text-align: center;
+  white-space: normal;
 }
 .tool-dock label.active-tool {
   color: #235dc1;
@@ -1276,26 +1404,26 @@ button svg {
   .coach-card {
     padding: 9px 10px;
   }
-  .coach-top {
+  .coach-progress {
     gap: 3px;
     flex-wrap: wrap;
     row-gap: 6px;
   }
-  .coach-top ol {
+  .coach-progress ol {
     gap: 4px;
   }
-  .coach-top > span {
+  .coach-progress > span {
     font-size: 12px;
   }
-  .coach-top li {
+  .coach-progress li {
     font-size: 12px;
     gap: 2px;
   }
   .coach-body > strong {
-    font-size: 14px;
+    font-size: 1rem;
   }
   .coach-body > p {
-    font-size: 12px;
+    font-size: 0.875rem;
   }
   .coach-action {
     margin-top: 7px;
@@ -1324,7 +1452,7 @@ button svg {
     padding: 5px 5px 6px;
   }
   .tool-dock label > span {
-    font-size: 12px;
+    font-size: 0.875rem;
   }
   .number-wrap,
   .choice-radio {
@@ -1366,7 +1494,7 @@ button svg {
     padding-top: 7px;
     padding-bottom: 7px;
   }
-  .coach-top {
+  .coach-progress {
     margin-bottom: 5px;
   }
   .coach-body > p {
@@ -1386,9 +1514,6 @@ button svg {
   }
   .thumb-navigation nav button {
     min-height: 44px;
-  }
-  .expression-pair {
-    margin-top: 4px;
   }
   .audio-source {
     display: none;

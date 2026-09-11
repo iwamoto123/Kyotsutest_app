@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   createGuide,
   getUnit,
+  guideTarget,
   inspectEvidence,
   nextGuide,
   parseNotebook,
@@ -58,6 +59,20 @@ test('the booking guide waits for both method and deadline across separate strok
   assert.equal(inspectEvidence(1, deadline).match, false);
   assert.equal(inspectEvidence(1, [...method, ...deadline]).match, true);
   assert.equal(inspectEvidence(0, [...method, ...deadline]).match, false);
+  const near = inspectEvidence(1, [
+    ...method,
+    ...traceRanges(point('s4', 'cloudy'), point('s4', 'indoors')),
+  ]);
+  assert.equal(near.match, false);
+  assert.equal(
+    guideTarget({
+      ...createGuide(),
+      question: 1,
+      stage: 'evidence-feedback',
+      ...near,
+    }).anchor,
+    's3',
+  );
 });
 
 test('guide moves from introduction through question and evidence and supports retry', () => {
@@ -130,4 +145,36 @@ test('saved sentences keep their original context, selected phrase, and translat
   assert.equal(restored.excerpt, entry.excerpt);
   assert.equal(restored.ja, entry.ja);
   assert.deepEqual(parseNotebook('{broken'), []);
+});
+
+test("guide highlights the search area without revealing the answer, then points feedback at the learner's trace", () => {
+  const finding = { ...createGuide(), stage: 'find' };
+  assert.equal(guideTarget(finding).anchor, 'passage');
+  const wrong = inspectEvidence(
+    0,
+    traceRanges(point('s3', 'form'), point('s3', 'Thursday')),
+  );
+  const feedback = {
+    ...finding,
+    stage: 'evidence-feedback',
+    ...wrong,
+  };
+  assert.equal(guideTarget(feedback).anchor, 's3');
+  assert.equal(guideTarget(nextGuide(feedback)).anchor, 'passage');
+  const correct = inspectEvidence(
+    0,
+    traceRanges(point('s1', 'by'), point('s1', 'ID')),
+  );
+  assert.equal(guideTarget({ ...feedback, ...correct }).anchor, 's1');
+});
+
+test('feedback follows the latest answer and a finished guide has no paper destination', () => {
+  const feedback = {
+    ...createGuide(),
+    stage: 'answer-feedback',
+    answerOption: 0,
+  };
+  assert.equal(guideTarget(feedback).anchor, 'q0o0');
+  assert.equal(guideTarget({ ...feedback, answerOption: 2 }).anchor, 'q0o2');
+  assert.equal(guideTarget({ ...feedback, stage: 'done' }), null);
 });

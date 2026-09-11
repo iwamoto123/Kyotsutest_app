@@ -1,144 +1,206 @@
 'use client';
-import { Check, Compass, ArrowRight, PencilLine } from 'lucide-react';
+import {
+  Check,
+  ArrowRight,
+  ArrowUp,
+  ArrowDown,
+  PencilLine,
+  LocateFixed,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   GUIDE_CONTENT,
   type GuideState,
+  type GuideTarget,
   type ToolMode,
 } from '@/lib/study-interactions';
+import type { GuideLocation } from './use-guide-location';
 
 export function StudyGuide({
   state,
+  target,
+  location,
   mode,
-  selected,
+  selectedOption,
+  nextQuestion,
   onNext,
   onSubmit,
+  onTarget,
   onFind,
 }: {
   state: GuideState;
+  target: GuideTarget | null;
+  location: GuideLocation;
   mode: ToolMode;
-  selected: boolean;
+  selectedOption: number;
+  nextQuestion: number;
   onNext: () => void;
   onSubmit: () => void;
+  onTarget: () => void;
   onFind: () => void;
 }) {
   const content = GUIDE_CONTENT[state.question];
-  const stages = ['場面', '設問', '根拠', '解答'];
-  const current = state.stage.startsWith('intro')
-    ? 0
-    : state.stage.startsWith('question')
-      ? 1
-      : ['find', 'evidence-feedback'].includes(state.stage)
-        ? 2
-        : 3;
-  const intro = state.stage === 'intro-summary';
+  const current = target?.step ?? 4;
+  const away = target !== null && location === 'other-page';
+  const answerMode = state.stage === 'answer' && mode !== 'read';
   let title = '',
     body = '',
     action = '';
   switch (state.stage) {
     case 'intro':
-      title = 'まず、冒頭の1文で場面をつかもう。';
+      title = '導入文を読んで、場面をつかもう。';
       body = '何について、どんな文章を読むのかな？';
-      action = '導入を確認した';
+      action = '読めた・場面を整理';
       break;
     case 'intro-summary':
-      title = '読むのは、夜の博物館のイベント案内。';
-      body = '場面をつかめたね。次は、何を探すか決めよう。';
-      action = '設問を見よう';
+      title = '英文の下で、場面を整理したよ。';
+      body = '次は設問を読んで、探す情報を決めよう。';
+      action = '次は、設問文を見る';
       break;
     case 'question':
-      title = `問${state.question + 1}は、何を聞いている？`;
-      body = '設問を先に読んで、本文で探す情報を決めよう。';
-      action = '設問を確認した';
+      title = `問${state.question + 1}で聞かれていることは？`;
+      body = '②の設問文に注目しよう。';
+      action = '読めた・探すことを整理';
       break;
     case 'question-summary':
-      title = content.search;
-      body = 'これが今回、本文で探すこと。整理メモに残したよ。';
-      action = '本文で探す';
+      title = '探すことを、設問の下にまとめたよ。';
+      body = '次は本文へ。根拠になる部分に線を引こう。';
+      action = '次は、本文で根拠を探す';
       break;
     case 'find':
       title = content.instruction;
-      body = '文の途中からでもOK。指を離すと確定するよ。';
+      body = '根拠だと思う英文をなぞって、指を離そう。';
       break;
     case 'evidence-feedback':
       title = state.match
-        ? 'そこだね！ 根拠を見つけた。'
-        : '探す情報と照らし合わせよう。';
-      body = state.message;
-      action = state.match ? '選択肢を見よう' : 'もう一度探す';
+        ? '根拠を見つけた！ 英文と整理を確認。'
+        : 'なぞった箇所の確認ポイントを読もう。';
+      body = state.match
+        ? '次は、この内容と選択肢を照らし合わせよう。'
+        : '確認ポイントは「次に確認」にも保存したよ。';
+      action = state.match ? '次は、選択肢を選ぶ' : '本文でもう一度探す';
       break;
     case 'answer':
-      title = '根拠の内容と合う選択肢を選ぼう。';
-      body = '番号か選択肢をタップ。選んだら解答を確定しよう。';
-      action = 'この解答にする';
+      title = '見つけた根拠と、選択肢を照らし合わせよう。';
+      body =
+        selectedOption < 0
+          ? '番号か英文をタップして選ぼう。'
+          : `選択肢 ${selectedOption + 1} を選択中。確定前なら選び直せるよ。`;
+      action =
+        selectedOption < 0
+          ? '選択肢を選ぶと確定できる'
+          : `選択肢 ${selectedOption + 1} で確定`;
       break;
     case 'answer-feedback':
-      title = state.match ? '確認できたね！' : 'この違いを確認しておこう。';
-      body = state.message;
+      title = state.match
+        ? '確認できた！ 選択肢の下に整理したよ。'
+        : '選んだ選択肢の下で、違いを確認しよう。';
+      body = state.match
+        ? '根拠と選択肢を結びつけられたね。'
+        : '確認ポイントは「次に確認」にも保存したよ。';
       action = state.match
-        ? state.question === 2
+        ? nextQuestion < 0
           ? '今回の整理を見る'
-          : '次の設問へ'
+          : `次は、問${nextQuestion + 1}へ`
         : 'もう一度選ぶ';
       break;
     case 'done':
-      title = '解き方の順番を、ひと通りつかんだね。';
-      body = '場面 → 設問 → 根拠 → 選択肢。整理メモを見返そう。';
+      title = '今回の解答と、整理した内容を見返そう。';
+      body = '全訳と音声で、読みにくかったところを復習できるよ。';
       action = '全訳・音声で復習';
       break;
   }
+  const LocationIcon =
+    location === 'above'
+      ? ArrowUp
+      : location === 'below'
+        ? ArrowDown
+        : away
+          ? ArrowRight
+          : LocateFixed;
+  const direction = away
+    ? `${target?.page === 0 ? '本文' : '設問'}ページへ`
+    : location === 'above'
+      ? '上にあります'
+      : location === 'below'
+        ? '下にあります'
+        : 'いま見る場所';
   return (
     <section
       className={`coach-card ${state.stage.endsWith('feedback') ? (state.match ? 'coach-positive' : 'coach-retry') : ''}`}
       aria-label="解き方ガイド"
     >
-      <div className="coach-top">
-        <span>
-          <Compass size={15} />
-          解き方ガイド
-        </span>
+      <div className="coach-progress">
+        <span>問{state.question + 1} / 3</span>
         <ol aria-label="読む順番">
-          {stages.map((stage, i) => (
-            <li key={stage} aria-current={current === i ? 'step' : undefined}>
-              {i < current ? <Check size={11} /> : <span>{i + 1}</span>}
-              {stage}
+          {['場面', '設問', '根拠', '解答'].map((label, i) => (
+            <li
+              key={label}
+              aria-current={i + 1 === current ? 'step' : undefined}
+            >
+              {i + 1 < current ? (
+                <Check size={12} aria-hidden="true" />
+              ) : (
+                <span>{i + 1}</span>
+              )}
+              {label}
             </li>
           ))}
         </ol>
       </div>
+      {target && (
+        <button
+          className={`coach-destination ${location !== 'visible' ? 'destination-away' : ''}`}
+          onClick={onTarget}
+          aria-label={`${target.label}を表示。${direction}`}
+        >
+          <span className="focus-number">{target.step}</span>
+          <strong>{target.label}</strong>
+          <span className="destination-direction">
+            <LocationIcon size={15} aria-hidden="true" />
+            {direction}
+          </span>
+        </button>
+      )}
       <div className="coach-body" aria-live="polite">
-        <strong>{title}</strong>
+        <strong id="guide-instruction">{title}</strong>
         <p>{body}</p>
-        {state.stage.endsWith('feedback') && !state.match && (
-          <div className="coach-save">「次に確認」に記録したよ。</div>
-        )}
-        {(intro || (state.stage === 'evidence-feedback' && state.match)) && (
-          <div className="expression-pair">
-            <span lang="en">
-              {intro ? 'a notice about an evening event' : content.expression}
-            </span>
-            <span>
-              {intro ? '夜のイベントについてのお知らせ' : content.meaning}
-            </span>
-          </div>
-        )}
       </div>
-      <div className="coach-action">
-        {state.stage === 'find' ? (
-          <Button variant="outline" onClick={onFind}>
-            <PencilLine size={16} />
-            {mode === 'ink' ? '根拠をなぞる位置へ' : '線を引くモードへ'}
-          </Button>
-        ) : (
+      {state.stage === 'find' && mode === 'ink' && !away ? (
+        <div className="coach-gesture">
+          <PencilLine size={16} aria-hidden="true" />
+          いまは、紙面をなぞる番
+        </div>
+      ) : (
+        <div className="coach-action">
           <Button
-            onClick={state.stage === 'answer' ? onSubmit : onNext}
-            disabled={state.stage === 'answer' && !selected}
+            onClick={
+              away || answerMode
+                ? onTarget
+                : state.stage === 'find'
+                  ? onFind
+                  : state.stage === 'answer'
+                    ? onSubmit
+                    : onNext
+            }
+            disabled={
+              !away &&
+              !answerMode &&
+              state.stage === 'answer' &&
+              selectedOption < 0
+            }
           >
-            {action}
-            <ArrowRight size={16} />
+            {away
+              ? `${target?.page === 0 ? '本文' : '設問'}の ${target?.step} を見る`
+              : answerMode
+                ? '選択肢を選ぶモードに戻る'
+                : state.stage === 'find'
+                  ? '線を引いて探す'
+                  : action}
+            <ArrowRight size={17} aria-hidden="true" />
           </Button>
-        )}
-      </div>
+        </div>
+      )}
     </section>
   );
 }

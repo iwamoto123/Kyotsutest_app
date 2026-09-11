@@ -154,6 +154,7 @@ export function inspectEvidence(question: number, ranges: TextRange[]) {
       : guide.keywords.some((word) => words.includes(word));
   return {
     match,
+    evidenceUnit: selected.length ? expected : ranges.at(-1)?.unit,
     message: match
       ? `そこだね！ ${guide.summary}`
       : selected.length
@@ -176,6 +177,8 @@ export type GuideState = {
   question: number;
   match: boolean;
   message: string;
+  answerOption?: number;
+  evidenceUnit?: string;
 };
 export const createGuide = (): GuideState => ({
   stage: 'intro',
@@ -228,6 +231,58 @@ export function resumeGuide(
   if (grades[state.question] !== null || state.stage === 'done')
     return { stage: 'question', question: first, match: false, message: '' };
   return state;
+}
+
+export type GuideTarget = {
+  anchor: string;
+  page: number;
+  step: number;
+  label: string;
+};
+
+// One destination drives both the paper marker and the coach's location link.
+// Finding an answer points at the whole passage, never its answer sentence.
+export function guideTarget(state: GuideState): GuideTarget | null {
+  const question = state.question;
+  if (state.stage.startsWith('intro'))
+    return { anchor: 'intro', page: 0, step: 1, label: '導入文' };
+  if (state.stage.startsWith('question'))
+    return {
+      anchor: `question-${question}`,
+      page: 1,
+      step: 2,
+      label: `問${question + 1}の設問文`,
+    };
+  if (state.stage === 'find')
+    return { anchor: 'passage', page: 0, step: 3, label: '本文全体' };
+  if (state.stage === 'evidence-feedback') {
+    const anchor = state.match
+      ? QUESTIONS[question].evidence
+      : state.evidenceUnit && getUnit(state.evidenceUnit)
+        ? state.evidenceUnit
+        : 'passage';
+    return {
+      anchor,
+      page: /^q\d/.test(anchor) ? 1 : 0,
+      step: 3,
+      label: state.match ? `問${question + 1}の根拠` : 'なぞった箇所',
+    };
+  }
+  if (state.stage === 'answer-feedback' && state.answerOption !== undefined)
+    return {
+      anchor: `q${question}o${state.answerOption}`,
+      page: 1,
+      step: 4,
+      label: `選んだ選択肢 ${state.answerOption + 1}`,
+    };
+  if (state.stage === 'answer' || state.stage === 'answer-feedback')
+    return {
+      anchor: `choices-${question}`,
+      page: 1,
+      step: 4,
+      label: `問${question + 1}の選択肢`,
+    };
+  return null;
 }
 export type NotebookEntry = {
   id: string;

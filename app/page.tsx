@@ -33,6 +33,7 @@ import {
   QUESTIONS,
   SENTENCES,
   normalizeWord,
+  type Sentence,
 } from '@/lib/exam-content';
 import { createRun, formatTime, runReducer, scoreRun } from '@/lib/exam-engine';
 import {
@@ -40,6 +41,7 @@ import {
   NOTEBOOK_KEY,
   createGuide,
   getUnit,
+  guideTarget,
   inspectEvidence,
   nextGuide,
   resumeGuide,
@@ -49,10 +51,13 @@ import {
   type NotebookEntry,
   type TextRange,
   type ToolMode,
+  type GuideTarget,
 } from '@/lib/study-interactions';
 import vocabulary from '@/lib/vocabulary.json';
 import { TouchText, TextToolsContext } from './touch-text';
 import { StudyGuide } from './study-guide';
+import { GuideRegion, type GuideAnnotation } from './guide-region';
+import { useGuideLocation } from './use-guide-location';
 import { ReviewPlayer, type ReviewPlayerHandle } from './review-player';
 
 type Mark = {
@@ -146,6 +151,37 @@ export default function Home() {
   const currentGuide = GUIDE_CONTENT[question];
   const score = scoreRun(run);
   const selected = showGuide ? practiceChoice : run.choices[question];
+  const target = showGuide ? guideTarget(guide) : null;
+  const targetLocation = useGuideLocation(scroll, target, page);
+  const annotation: GuideAnnotation | undefined = !showGuide
+    ? undefined
+    : guide.stage === 'intro-summary'
+      ? {
+          title: '場面の整理',
+          expression: 'a notice about an evening event',
+          text: '読むものは、博物館の夜のイベント案内。',
+          tone: 'note',
+        }
+      : guide.stage === 'question-summary'
+        ? {
+            title: '今回、本文で探すこと',
+            text: currentGuide.search,
+            tone: 'note',
+          }
+        : guide.stage === 'evidence-feedback'
+          ? {
+              title: guide.match ? '✓ 見つけた根拠' : 'この箇所で確認すること',
+              expression: guide.match ? currentGuide.expression : undefined,
+              text: guide.match ? currentGuide.summary : guide.message,
+              tone: guide.match ? 'success' : 'retry',
+            }
+          : guide.stage === 'answer-feedback'
+            ? {
+                title: guide.match ? '✓ 根拠と一致' : '根拠と比べてみよう',
+                text: guide.message,
+                tone: guide.match ? 'success' : 'retry',
+              }
+            : undefined;
   const stocked = new Set(
     entries
       .filter((entry) => entry.kind === 'sentence' && entry.unit)
@@ -293,6 +329,67 @@ export default function Home() {
       ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }, [listening, page, review]);
 
+  useLayoutEffect(() => {
+    if (!target) return;
+    player.current?.pause();
+    setPage(target.page);
+    setDraft([]);
+    const frame = requestAnimationFrame(() => scrollToTarget(target, true));
+    return () => cancelAnimationFrame(frame);
+    // Only a new guide step moves the paper. Manual page changes, scrolling,
+    // dictionary use, and mode switches must not pull the reader back.
+  }, [
+    guide.stage,
+    guide.question,
+    guide.evidenceUnit,
+    guide.answerOption,
+    showGuide,
+  ]);
+
+  function scrollToTarget(destination: GuideTarget, includeContext = false) {
+    const container = scroll.current;
+    const element = container?.querySelector<HTMLElement>(
+      `[data-guide-anchor="${destination.anchor}"]`,
+    );
+    if (!container || !element) return;
+    const context = element.previousElementSibling;
+    const firstChoice = element.querySelector<HTMLElement>('.choice-row');
+    let alignTo = element;
+    // Include the preceding evidence only when the first choice still fits.
+    // The location link always goes directly to the numbered destination.
+    if (
+      includeContext &&
+      context instanceof HTMLElement &&
+      context.matches('.answer-reference') &&
+      firstChoice
+    ) {
+      const required =
+        firstChoice.getBoundingClientRect().bottom -
+        context.getBoundingClientRect().top;
+      if (required <= container.clientHeight - 28) alignTo = context;
+    }
+    const reduced = window.matchMedia(
+      '(prefers-reduced-motion: reduce)',
+    ).matches;
+    container.scrollTo({
+      top:
+        container.scrollTop +
+        alignTo.getBoundingClientRect().top -
+        container.getBoundingClientRect().top -
+        14,
+      behavior: reduced ? 'auto' : 'smooth',
+    });
+  }
+  function showTarget(destination = target) {
+    if (!destination) return;
+    player.current?.pause();
+    setPage(destination.page);
+    setDraft([]);
+    if (guide.stage === 'find') setMode('ink');
+    if (guide.stage === 'answer') setMode('read');
+    requestAnimationFrame(() => scrollToTarget(destination));
+  }
+
   function turn(next: number, target?: string) {
     player.current?.pause();
     setPage(next);
@@ -421,8 +518,12 @@ export default function Home() {
               sentence: evidence,
             }),
       );
-    if (showGuide && guide.stage === 'find') {
-      setGuide({ ...guide, stage: 'evidence-feedback', ...result });
+    if (showGuide && ['find', 'evidence-feedback'].includes(guide.stage)) {
+      setGuide({
+        ...guide,
+        stage: 'evidence-feedback',
+        ...result,
+      });
       if (result.match)
         note(
           `evidence-${question}`,
@@ -498,7 +599,13 @@ export default function Home() {
     });
     if (showGuide) {
       const message = GUIDE_CONTENT[index].feedback[choice];
-      setGuide({ ...guide, stage: 'answer-feedback', match: correct, message });
+      setGuide({
+        ...guide,
+        stage: 'answer-feedback',
+        match: correct,
+        message,
+        answerOption: choice,
+      });
       if (!correct)
         recordMistake(
           'answer',
@@ -531,7 +638,7 @@ export default function Home() {
   }
   function findEvidence() {
     setTool('ink');
-    turn(0, 's0');
+    showTarget(guideTarget({ ...guide, stage: 'find' }));
   }
   function advance() {
     if (guide.stage === 'done') {
@@ -560,9 +667,8 @@ export default function Home() {
     if (next.stage === 'question' || next.stage === 'answer') {
       setTool('read');
       setPracticeChoice(-1);
-      turn(1, `q${next.question}`);
     }
-    if (next.stage === 'find') findEvidence();
+    if (next.stage === 'find') setTool('ink');
     if (next.stage === 'done') {
       setTool('read');
       setDrawer({ kind: 'results' });
@@ -584,26 +690,12 @@ export default function Home() {
       const next = resumeGuide(guide, run.grades, run.phase === 'finished');
       setGuide(next);
       setActiveQuestion(next.question);
-      if (next.stage === 'find') findEvidence();
-      else if (
-        next.stage === 'question' ||
-        next.stage === 'answer' ||
-        next.stage === 'answer-feedback'
-      )
-        turn(1, `q${next.question}`);
-      else if (next.stage.startsWith('intro')) turn(0, 'intro');
+      if (next.stage === 'find') setTool('ink');
     }
   }
   function returnToGuide() {
     setPeekQuestion(null);
     setMode(guide.stage === 'find' ? 'ink' : 'read');
-    turn(
-      ['intro', 'intro-summary', 'find', 'evidence-feedback'].includes(
-        guide.stage,
-      )
-        ? 0
-        : 1,
-    );
   }
   function viewSavedUnit(unit: string) {
     setDrawer(null);
@@ -734,86 +826,137 @@ export default function Home() {
     return () => lifecycle.abort();
   }, []);
 
+  function renderText(
+    unit: Sentence,
+    options: { className?: string; onRead?: () => void } = {},
+  ) {
+    return (
+      <GuideRegion
+        anchor={unit.id}
+        target={target}
+        annotation={annotation}
+        className="text-region"
+      >
+        <TouchText {...unit} {...options} />
+      </GuideRegion>
+    );
+  }
+
   function renderQuestion(index: number) {
     const q = QUESTIONS[index],
       graded = run.grades[index] !== null,
       revealed = !showGuide && (graded || run.phase === 'finished');
-    const choice = showGuide ? practiceChoice : run.choices[index];
+    const choice = showGuide
+      ? guide.stage === 'answer-feedback'
+        ? (guide.answerOption ?? practiceChoice)
+        : practiceChoice
+      : run.choices[index];
     const locked =
       peekQuestion !== null ||
       (showGuide
         ? guide.stage !== 'answer'
         : graded || run.phase === 'finished');
     return (
-      <section
-        className={`question-block ${showGuide && guide.stage.startsWith('question') ? 'guide-target' : ''}`}
-        key={index}
-      >
-        <div className="question-stem">
-          <b>問{index + 1}</b>
-          <TouchText id={`q${index}`} en={q.en} ja={q.ja} />
-          <span
-            className={`answer-box ${revealed ? (run.grades[index] ? 'correct-mark' : 'wrong-mark') : ''}`}
-          >
-            {index + 1}
-          </span>
-        </div>
-        <RadioGroup
-          className="choices"
-          value={choice < 0 ? '' : String(choice)}
-          aria-label={`問${index + 1}の選択肢`}
-          onValueChange={(value) => {
-            if (value !== null) choose(index, Number(value));
-          }}
-          disabled={locked || mode !== 'read'}
+      <section className="question-block" key={index}>
+        <GuideRegion
+          anchor={`question-${index}`}
+          target={target}
+          annotation={annotation}
+          className="stem-region"
         >
-          {q.choices.map(([en, ja], option) => (
-            <div
-              className={`choice-row ${choice === option ? 'choice-selected' : ''} ${run.eliminated[index].includes(option) ? 'eliminated' : ''} ${revealed && q.answer === option ? 'answer-correct' : ''}`}
-              key={option}
+          <div className="question-stem">
+            <b>問{index + 1}</b>
+            {renderText({ id: `q${index}`, en: q.en, ja: q.ja })}
+            <span
+              className={`answer-box ${revealed ? (run.grades[index] ? 'correct-mark' : 'wrong-mark') : ''}`}
             >
-              <div className="number-wrap">
-                <RadioGroupItem
-                  value={String(option)}
-                  className="choice-radio"
-                  aria-label={`選択肢${option + 1}`}
-                  disabled={run.eliminated[index].includes(option)}
-                />
-                <span aria-hidden="true">{option + 1}</span>
-              </div>
-              <TouchText
-                id={`q${index}o${option}`}
-                en={en}
-                ja={ja}
-                onRead={() => {
-                  if (!locked) choose(index, option);
+              {index + 1}
+            </span>
+          </div>
+        </GuideRegion>
+        {showGuide && guide.stage.startsWith('answer') && (
+          <aside className="answer-reference">
+            <div>
+              <span className="reference-number">3</span>
+              <strong>見つけた根拠</strong>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setTool('read');
+                  turn(0, q.evidence);
                 }}
-              />
-              {!showGuide && !locked && (
-                <Button
-                  variant="ghost"
-                  className="eliminate-button"
-                  aria-label={`選択肢${option + 1}を${run.eliminated[index].includes(option) ? '戻す' : '消す'}`}
-                  onClick={() =>
-                    setRun((previous) =>
-                      runReducer(previous, {
-                        type: 'eliminate',
-                        question: index,
-                        option,
-                      }),
-                    )
-                  }
-                >
-                  {run.eliminated[index].includes(option) ? (
-                    <RotateCcw size={15} />
-                  ) : (
-                    '／'
-                  )}
-                </Button>
-              )}
+              >
+                本文で確認
+                <ArrowRight size={14} />
+              </Button>
             </div>
-          ))}
-        </RadioGroup>
+            <span lang="en">{getUnit(q.evidence)!.en}</span>
+            <p>{GUIDE_CONTENT[index].summary}</p>
+          </aside>
+        )}
+        <GuideRegion
+          anchor={`choices-${index}`}
+          target={target}
+          annotation={annotation}
+          className="choices-region"
+        >
+          <RadioGroup
+            className="choices"
+            value={choice < 0 ? '' : String(choice)}
+            aria-label={`問${index + 1}の選択肢`}
+            onValueChange={(value) => {
+              if (value !== null) choose(index, Number(value));
+            }}
+            disabled={locked || mode !== 'read'}
+          >
+            {q.choices.map(([en, ja], option) => (
+              <div
+                className={`choice-row ${choice === option ? 'choice-selected' : ''} ${run.eliminated[index].includes(option) ? 'eliminated' : ''} ${revealed && q.answer === option ? 'answer-correct' : ''}`}
+                key={option}
+              >
+                <div className="number-wrap">
+                  <RadioGroupItem
+                    value={String(option)}
+                    className="choice-radio"
+                    aria-label={`選択肢${option + 1}`}
+                    disabled={run.eliminated[index].includes(option)}
+                  />
+                  <span aria-hidden="true">{option + 1}</span>
+                </div>
+                {renderText(
+                  { id: `q${index}o${option}`, en, ja },
+                  {
+                    onRead: () => {
+                      if (!locked) choose(index, option);
+                    },
+                  },
+                )}
+                {!showGuide && !locked && (
+                  <Button
+                    variant="ghost"
+                    className="eliminate-button"
+                    aria-label={`選択肢${option + 1}を${run.eliminated[index].includes(option) ? '戻す' : '消す'}`}
+                    onClick={() =>
+                      setRun((previous) =>
+                        runReducer(previous, {
+                          type: 'eliminate',
+                          question: index,
+                          option,
+                        }),
+                      )
+                    }
+                  >
+                    {run.eliminated[index].includes(option) ? (
+                      <RotateCcw size={15} />
+                    ) : (
+                      '／'
+                    )}
+                  </Button>
+                )}
+              </div>
+            ))}
+          </RadioGroup>
+        </GuideRegion>
         {!showGuide && (
           <Button
             className="evidence-link"
@@ -914,7 +1057,9 @@ export default function Home() {
           <div className="paper-meta">
             <span>
               {showGuide
-                ? '解き方を身につける'
+                ? page === 0
+                  ? '本文ページ'
+                  : '設問・選択肢ページ'
                 : review
                   ? '全訳・音声で復習'
                   : '3分で3問に挑戦'}
@@ -955,15 +1100,6 @@ export default function Home() {
               </div>
             </section>
           )}
-          {showGuide &&
-            ['find', 'evidence-feedback', 'answer', 'answer-feedback'].includes(
-              guide.stage,
-            ) && (
-              <div className="search-slip">
-                <span>問{question + 1}で探すこと</span>
-                <strong>{currentGuide.search}</strong>
-              </div>
-            )}
           <article className="exam-sheet" key={page}>
             <h1>英語（リーディング）</h1>
             <div className="exam-heading">
@@ -972,49 +1108,57 @@ export default function Home() {
             </div>
             {page === 0 ? (
               <>
-                <TouchText
-                  {...INTRO}
-                  className={`exam-intro ${showGuide && guide.stage.startsWith('intro') ? 'guide-target' : ''}`}
-                />
-                <section className="notice">
-                  <h2>
-                    <TouchText
-                      id="title"
-                      en="Night at the Museum"
-                      ja="夜の博物館"
-                    />
-                  </h2>
-                  {PASSAGE.map((section, index) => (
-                    <div key={index}>
-                      {section.title && (
-                        <h3>
-                          <TouchText
-                            id={`heading${index}`}
-                            en={section.title}
-                            ja={section.titleJa!}
-                          />
-                        </h3>
-                      )}
-                      {section.sentences.map((sentence) => (
-                        <TouchText
-                          key={sentence.id}
-                          {...sentence}
-                          className={`passage-sentence ${listening !== null && SENTENCES[listening].id === sentence.id ? 'sentence-playing' : ''}`}
-                          onRead={
-                            review
-                              ? () =>
-                                  player.current?.playSentence(
-                                    SENTENCES.findIndex(
-                                      (item) => item.id === sentence.id,
-                                    ),
-                                  )
-                              : undefined
-                          }
-                        />
-                      ))}
-                    </div>
-                  ))}
-                </section>
+                {renderText(INTRO, { className: 'exam-intro' })}
+                <GuideRegion
+                  anchor="passage"
+                  target={target}
+                  annotation={annotation}
+                  className="passage-region"
+                >
+                  {showGuide && guide.stage === 'find' && (
+                    <p className="passage-search">
+                      <span>問{question + 1}で探すこと</span>
+                      {currentGuide.search}
+                    </p>
+                  )}
+                  <section className="notice">
+                    <h2>
+                      {renderText({
+                        id: 'title',
+                        en: 'Night at the Museum',
+                        ja: '夜の博物館',
+                      })}
+                    </h2>
+                    {PASSAGE.map((section, index) => (
+                      <div key={index}>
+                        {section.title && (
+                          <h3>
+                            {renderText({
+                              id: `heading${index}`,
+                              en: section.title,
+                              ja: section.titleJa!,
+                            })}
+                          </h3>
+                        )}
+                        {section.sentences.map((sentence) => (
+                          <div key={sentence.id}>
+                            {renderText(sentence, {
+                              className: `passage-sentence ${listening !== null && SENTENCES[listening].id === sentence.id ? 'sentence-playing' : ''}`,
+                              onRead: review
+                                ? () =>
+                                    player.current?.playSentence(
+                                      SENTENCES.findIndex(
+                                        (item) => item.id === sentence.id,
+                                      ),
+                                    )
+                                : undefined,
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </section>
+                </GuideRegion>
                 <p className="paper-instruction">
                   {MODES.find((tool) => tool.id === mode)!.help}
                 </p>
@@ -1134,10 +1278,16 @@ export default function Home() {
           ) : showGuide ? (
             <StudyGuide
               state={guide}
+              target={target}
+              location={targetLocation}
               mode={mode}
-              selected={selected >= 0}
+              selectedOption={selected}
+              nextQuestion={run.grades.findIndex(
+                (grade, index) => grade === null && index !== question,
+              )}
               onNext={advance}
               onSubmit={() => submit()}
+              onTarget={() => showTarget()}
               onFind={findEvidence}
             />
           ) : (
